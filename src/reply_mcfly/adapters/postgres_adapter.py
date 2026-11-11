@@ -341,3 +341,10 @@ class PostgresEmailRepository:
             entry.gmail_sent_message_id = gmail_message_id
             entry.sent_at = datetime.now(UTC)
         emit("delivery_confirmed", job_id=str(job.id), status=Status.SENT.value)
+
+    def release_lease(self, job: Job) -> None:
+        with Session(self.engine) as session, session.begin():
+            row = session.get(EmailJobModel, job.id, with_for_update=True)
+            if row and row.lease_token == job.lease_token:
+                row.lease_until = None
+                row.lease_token = None

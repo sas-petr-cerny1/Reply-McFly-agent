@@ -2,8 +2,10 @@ from __future__ import annotations
 
 import base64
 import binascii
+import os
 import time
 from collections.abc import Callable, Iterator
+from dataclasses import replace
 from contextlib import contextmanager
 from datetime import UTC, datetime
 from email import policy
@@ -24,6 +26,7 @@ from reply_mcfly.domain.email import (
     Job,
     MessageMetadata,
     OutboxEntry,
+    ThreadHistoryPassage,
     WorkflowError,
     require_mailbox,
 )
@@ -194,6 +197,9 @@ def encode_reply(job: Job, entry: OutboxEntry) -> str:
 class GmailAdapter:
     def __init__(self, service_factory: Callable[[], Any], mailbox_id: str) -> None:
         self.service_factory, self.mailbox_id = service_factory, mailbox_id
+        self.enable_thread_history = os.environ.get(
+            "MCFLY_ENABLE_THREAD_HISTORY", "false"
+        ).casefold() in {"true", "1", "yes"}
 
     @contextmanager
     def _service(self) -> Iterator[Any]:
@@ -310,7 +316,61 @@ class GmailAdapter:
         return self._get(message_id, "metadata").metadata()
 
     def message(self, message_id: str) -> IncomingEmail:
-        return parse_message(self._get(message_id, "raw"))
+        current = parse_message(self._get(message_id, "raw"))
+        if not self.enable_thread_history:
+            return current
+        return replace(current, thread_history=self._thread_history(current))
+
+    def _thread_history(self, current: IncomingEmail) -> tuple[ThreadHistoryPassage, ...]:
+        """At most 3 earlier messages in this exact Gmail thread; no cross-thread data."""
+        with self._service() as service:
+            thread = self._execute(
+                service.users().threads().get(
+                    userId="me", id=current.metadata.thread_id, format="minimal"
+                )
+            )
+            if not isinstance(thread, dict) or thread.get("id") != current.metadata.thread_id:
+                raise WorkflowError("THREAD_CONTEXT_MISMATCH")
+            items = thread.get("messages", [])
+            if not isinstance(items, list) or len(items) > 40:
+                raise WorkflowError("THREAD_CONTEXT_LIMIT")
+            ids = [item.get("id") for item in items if isinstance(item, dict)]
+            if current.metadata.message_id not in ids:
+                raise WorkflowError("THREAD_CONTEXT_MISMATCH")
+            before = ids[: ids.index(current.metadata.message_id)]
+            selected: list[ThreadHistoryPassage] = []
+            for previous_id in reversed(before[-8:]):
+                if len(selected) == 3:
+                    break
+                if not isinstance(previous_id, str) or not previous_id:
+                    continue
+                result = self._execute(
+                    service.users().messages().get(userId="me", id=previous_id, format="raw")
+                )
+                try:
+                    payload = GmailMessagePayload.model_validate(result)
+                except ValidationError:
+                    raise WorkflowError("INVALID_THREAD_MESSAGE") from None
+                if payload.id != previous_id or payload.threadId != current.metadata.thread_id:
+                    raise WorkflowError("THREAD_CONTEXT_MISMATCH")
+                previous = parse_message(payload)
+                if (
+                    previous.metadata.received_at >= current.metadata.received_at
+                    or previous.sender not in {current.sender, self.mailbox_id.casefold()}
+                    or previous.automatic
+                    and previous.sender != self.mailbox_id.casefold()
+                    or not previous.text.strip()
+                    or previous.has_attachments
+                ):
+                    continue
+                selected.append(
+                    ThreadHistoryPassage(
+                        source_id=f"thread:{previous_id}",
+                        sender=previous.sender,
+                        text=previous.text[:1200],
+                    )
+                )
+            return tuple(reversed(selected))
 
     def send(self, job: Job, entry: OutboxEntry) -> str:
         with self._service() as service:

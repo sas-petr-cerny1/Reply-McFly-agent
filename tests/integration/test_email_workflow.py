@@ -172,6 +172,16 @@ def test_text_workflow_is_deduplicated(harness: Harness) -> None:
     assert harness.repository.outbox(job_id) is not None
 
 
+def test_processing_dry_run_prepares_without_send(harness: Harness) -> None:
+    job_id = harness.enqueue()
+    assert harness.processing.process(job_id, send_enabled=False) == Status.READY_TO_SEND
+    assert harness.gmail.send_calls == 0
+    assert harness.runner.calls == 1
+    job = harness.repository.get(job_id)
+    assert job.lease_token is None
+    assert harness.repository.outbox(job_id) is not None
+
+
 def test_queue_failure_does_not_advance_checkpoint(harness: Harness) -> None:
     harness.queue.unavailable = True
     with pytest.raises(WorkflowError, match="TASK_QUEUE_UNAVAILABLE"):

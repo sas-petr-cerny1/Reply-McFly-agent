@@ -18,17 +18,48 @@ def emit(
     status: str | None = None,
     error_code: str | None = None,
     duration_seconds: float | None = None,
+    gmail_message_id: str | None = None,
+    gmail_thread_id: str | None = None,
+    mode: str | None = None,
+    response_type: str | None = None,
+    validation_category: str | None = None,
+    finish_reason: str | None = None,
+    has_text: bool | None = None,
+    text_byte_length: int | None = None,
+    prompt_token_count: int | None = None,
+    candidates_token_count: int | None = None,
+    total_token_count: int | None = None,
+    validation_fields: list[str] | None = None,
+    attempt: int | None = None,
 ) -> None:
-    logger.info(
-        json.dumps(
-            {
-                "timestamp": datetime.now(UTC).isoformat(),
-                "event": event,
-                "job_id": job_id,
-                "correlation_id": job_id,
-                "status": status,
-                "error_code": error_code,
-                "duration_seconds": duration_seconds,
-            }
-        )
-    )
+    payload: dict[str, object] = {
+        "timestamp": datetime.now(UTC).isoformat(),
+        "event": event,
+        "job_id": job_id,
+        "correlation_id": job_id,
+        "status": status,
+        "error_code": error_code,
+        "duration_seconds": duration_seconds,
+    }
+    if gmail_message_id is not None:
+        payload["gmail_message_id"] = gmail_message_id
+    if gmail_thread_id is not None:
+        payload["gmail_thread_id"] = gmail_thread_id
+    if mode is not None:
+        payload["mode"] = mode
+    if response_type is not None:
+        payload["response_type"] = response_type
+    for key, value in (
+        ("validation_category", validation_category),
+        ("finish_reason", finish_reason),
+        ("has_text", has_text),
+        ("text_byte_length", text_byte_length),
+        ("prompt_token_count", prompt_token_count),
+        ("candidates_token_count", candidates_token_count),
+        ("total_token_count", total_token_count),
+        ("validation_fields", validation_fields),
+        ("attempt", attempt),
+    ):
+        if value is not None:
+            payload[key] = value
+    logger.info(json.dumps(payload))

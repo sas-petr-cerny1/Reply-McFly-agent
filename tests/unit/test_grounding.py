@@ -1,12 +1,16 @@
 from datetime import UTC, datetime
+from uuid import uuid4
 
 import pytest
 
+from reply_mcfly.application.reply_service import FallbackTemplates, ReplyService
 from reply_mcfly.domain.email import (
     Evidence,
     IncomingEmail,
+    Job,
     MessageMetadata,
     ReplyDraft,
+    Status,
     WorkflowError,
 )
 from reply_mcfly.domain.grounding import LiteralReplyValidator, render_verified_reply
@@ -71,16 +75,10 @@ def test_literal_sender_attribution_passes(email: IncomingEmail) -> None:
     LiteralReplyValidator().validate(email, verified_draft(email))
 
 
-@pytest.mark.parametrize(
-    "unsupported", ["Cena je 999 Kč.", "Doručení bude 12. prosince.", "https://invented.invalid"]
-)
-def test_new_claims_cannot_be_hidden_behind_valid_evidence(
-    email: IncomingEmail, unsupported: str
-) -> None:
+def test_extra_model_text_in_proposed_reply_is_ignored_at_validation(email: IncomingEmail) -> None:
     draft = verified_draft(email)
-    draft.proposed_reply += "\n" + unsupported
-    with pytest.raises(WorkflowError, match="UNSUPPORTED_REPLY_CLAIM"):
-        LiteralReplyValidator().validate(email, draft)
+    draft.proposed_reply += "\nCena je 999 Kč."
+    LiteralReplyValidator().validate(email, draft)
 
 
 def test_nonexistent_source_and_fabricated_quote_are_rejected(email: IncomingEmail) -> None:
@@ -95,8 +93,30 @@ def test_nonexistent_source_and_fabricated_quote_are_rejected(email: IncomingEma
         LiteralReplyValidator().validate(email, draft)
 
 
-def test_citation_does_not_authorize_paraphrase(email: IncomingEmail) -> None:
+def test_paraphrase_in_proposed_reply_does_not_block_evidence_validation(email: IncomingEmail) -> None:
     draft = verified_draft(email)
     draft.proposed_reply = "Potvrzujeme, že Vaše objednávka 123 je vyřízena."
-    with pytest.raises(WorkflowError, match="UNSUPPORTED_REPLY_CLAIM"):
-        LiteralReplyValidator().validate(email, draft)
+    LiteralReplyValidator().validate(email, draft)
+
+
+def test_reply_service_ignores_model_proposed_reply_body(email: IncomingEmail) -> None:
+    job = Job(
+        uuid4(),
+        "reply@agent.invalid",
+        email.metadata.message_id,
+        email.metadata.thread_id,
+        email.metadata.received_at,
+        Status.PROCESSING,
+        None,
+        None,
+        0,
+    )
+    draft = verified_draft(email)
+    draft.proposed_reply = "Model-only text that must not be sent."
+    service = ReplyService(
+        frozenset({email.sender}),
+        FallbackTemplates(),
+        LiteralReplyValidator(),
+    )
+    entry = service.draft(job, email, draft)
+    assert entry.draft_body == render_verified_reply(draft.evidence)

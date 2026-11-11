@@ -52,6 +52,13 @@ class MessageMetadata:
 
 
 @dataclass(frozen=True)
+class ThreadHistoryPassage:
+    source_id: str
+    sender: str
+    text: str
+
+
+@dataclass(frozen=True)
 class IncomingEmail:
     metadata: MessageMetadata
     sender: str
@@ -62,6 +69,7 @@ class IncomingEmail:
     automatic: bool = False
     has_attachments: bool = False
     unsupported_attachment: bool = False
+    thread_history: tuple[ThreadHistoryPassage, ...] = ()
 
 
 class Evidence(BaseModel):

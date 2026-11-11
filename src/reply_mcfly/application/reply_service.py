@@ -13,6 +13,7 @@ from reply_mcfly.domain.email import (
     prepare_reply,
     validate_recipient,
 )
+from reply_mcfly.domain.grounding import render_verified_reply
 from reply_mcfly.domain.reply_templates import (
     FALLBACK_MISSING_INFORMATION,
     FALLBACK_UNSUPPORTED_ATTACHMENT,
@@ -69,7 +70,7 @@ class ReplyService:
         return prepare_reply(
             job,
             email,
-            draft.proposed_reply,
+            render_verified_reply(draft.evidence),
             self.recipients,
             evidence=tuple((e.source_id, e.exact_quote) for e in draft.evidence),
         )

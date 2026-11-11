@@ -26,7 +26,7 @@ class EmailProcessingService:
         self.repository, self.gmail, self.runner = repository, gmail, runner
         self.mailbox_id, self.replies = mailbox_id, replies
 
-    def process(self, job_id: UUID) -> Status:
+    def process(self, job_id: UUID, *, send_enabled: bool = True) -> Status:
         require_mailbox(self.repository.get(job_id).mailbox_id, self.mailbox_id)
         deadline = time.monotonic() + 100
         job = self.repository.claim(job_id, uuid4())
@@ -66,6 +66,20 @@ class EmailProcessingService:
                     entry = self.replies.draft(job, email, draft)
             else:
                 self.replies.validate_stored(job, email, entry)
+            if not send_enabled:
+                self.repository.prepare(job, entry)
+                self.repository.release_lease(job)
+                emit(
+                    "live_email_dry_run_complete",
+                    job_id=str(job.id),
+                    status=Status.READY_TO_SEND.value,
+                    gmail_thread_id=job.gmail_thread_id,
+                    gmail_message_id=job.gmail_message_id,
+                    mode="dry_run",
+                    response_type=entry.response_type.value,
+                    duration_seconds=(datetime.now(UTC) - job.received_at).total_seconds(),
+                )
+                return Status.READY_TO_SEND
             if time.monotonic() + 45 > deadline:
                 raise WorkflowError("DEPENDENCY_TIMEOUT", retryable=True, status=503)
             self.repository.prepare(job, entry)
