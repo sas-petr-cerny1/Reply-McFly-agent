@@ -67,6 +67,11 @@ class HistoryPayload(BaseModel):
     nextPageToken: str | None = None
 
 
+class WatchPayload(BaseModel):
+    historyId: str = Field(pattern=r"^\d+$", max_length=32)
+    expiration: str = Field(pattern=r"^\d+$", max_length=16)
+
+
 class _ReadableHTML(HTMLParser):
     def __init__(self) -> None:
         super().__init__(convert_charrefs=True)
@@ -258,6 +263,34 @@ class GmailAdapter:
                 if not token:
                     return
             raise WorkflowError("HISTORY_PAGE_LIMIT", retryable=True, status=503)
+
+    def profile_history(self) -> str:
+        with self._service() as service:
+            result = self._execute(service.users().getProfile(userId="me"))
+            if not isinstance(result, dict):
+                raise WorkflowError("INVALID_GMAIL_PROFILE")
+            history = result.get("historyId")
+            if not isinstance(history, str) or not history.isdecimal():
+                raise WorkflowError("INVALID_GMAIL_PROFILE")
+            return history
+
+    def watch(self, topic: str) -> WatchPayload:
+        with self._service() as service:
+            try:
+                return WatchPayload.model_validate(
+                    self._execute(
+                        service.users().watch(
+                            userId="me",
+                            body={
+                                "topicName": topic,
+                                "labelIds": ["INBOX"],
+                                "labelFilterBehavior": "include",
+                            },
+                        )
+                    )
+                )
+            except ValidationError:
+                raise WorkflowError("INVALID_GMAIL_WATCH") from None
 
     def _get(self, message_id: str, format: str) -> GmailMessagePayload:
         with self._service() as service:

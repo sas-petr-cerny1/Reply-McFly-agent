@@ -19,6 +19,7 @@ class Settings(BaseSettings):
     ingress_audience: str = ""
     pubsub_service_account: str = ""
     tasks_service_account: str = ""
+    gmail_topic: str = "projects/reply-mcfly-poc/topics/gmail-events"
 
     def sqlalchemy_url(self) -> str:
         if self.database_url is None:
