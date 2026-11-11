@@ -14,7 +14,7 @@ from sqlalchemy import (
     select,
     text,
 )
-from sqlalchemy.dialects.postgresql import insert
+from sqlalchemy.dialects.postgresql import JSONB, insert
 from sqlalchemy.engine import Engine
 from sqlalchemy.orm import DeclarativeBase, Mapped, Session, mapped_column
 
@@ -22,6 +22,7 @@ from reply_mcfly.application.telemetry import emit
 from reply_mcfly.domain.email import (
     TERMINAL,
     TRANSITIONS,
+    Evidence,
     FallbackReason,
     Job,
     MessageMetadata,
@@ -116,7 +117,7 @@ class EmailOutboxModel(Base):
             "(response_type = 'GENERATED' AND fallback_reason IS NULL) OR "
             "(response_type = 'FALLBACK' AND fallback_reason IN "
             "('INSUFFICIENT_INFORMATION','UNSUPPORTED_ATTACHMENT') "
-            ")",
+            "AND fallback_reason IS NOT NULL)",
             name="ck_outbox_response_type",
         ),
     )
@@ -128,6 +129,7 @@ class EmailOutboxModel(Base):
     draft_body: Mapped[str] = mapped_column(Text)
     response_type: Mapped[str] = mapped_column(String(16))
     fallback_reason: Mapped[str | None] = mapped_column(String(64))
+    evidence: Mapped[list[dict[str, str]]] = mapped_column(JSONB, server_default="[]")
     in_reply_to: Mapped[str] = mapped_column(String(998))
     references: Mapped[str] = mapped_column(String(2000))
     status: Mapped[str] = mapped_column(String(32))
@@ -280,7 +282,12 @@ class PostgresEmailRepository:
             raise WorkflowError("OUTBOX_MISMATCH")
         with Session(self.engine) as session, session.begin():
             self._transition(session, job, Status.READY_TO_SEND, None)
-            values = {key: value for key, value in entry.__dict__.items() if key != "evidence"}
+            values = {
+                **entry.__dict__,
+                "evidence": [
+                    {"source_id": source, "exact_quote": quote} for source, quote in entry.evidence
+                ],
+            }
             session.execute(
                 insert(EmailOutboxModel)
                 .values(id=uuid4(), **values, status=Status.READY_TO_SEND.value)
@@ -303,6 +310,10 @@ class PostgresEmailRepository:
                 row.references,
                 ResponseType(row.response_type),
                 FallbackReason(row.fallback_reason) if row.fallback_reason else None,
+                tuple(
+                    (item.source_id, item.exact_quote)
+                    for item in (Evidence.model_validate(value) for value in row.evidence)
+                ),
             )
 
     def sent(self, job: Job, gmail_message_id: str) -> None:

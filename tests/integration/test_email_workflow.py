@@ -105,3 +105,42 @@ def test_concurrent_workers_have_only_one_owner(harness: Harness) -> None:
 
 def test_repository_deduplicates_jobs(harness: Harness) -> None:
     assert harness.enqueue() == harness.enqueue()
+
+
+def test_repository_roundtrips_reply_evidence(harness: Harness) -> None:
+    from reply_mcfly.domain.email import OutboxEntry
+
+    job = harness.repository.claim(harness.enqueue(), uuid4())
+    entry = OutboxEntry(
+        job.id,
+        f"<reply-{job.id}@agent.invalid>",
+        "sender@customer.invalid",
+        "Subject",
+        "Body",
+        "<original@customer.invalid>",
+        "",
+        evidence=(("email:a1", "Body"),),
+    )
+    harness.repository.prepare(job, entry)
+    assert harness.repository.outbox(job.id) == entry
+
+
+def test_database_rejects_fallback_without_reason(harness: Harness) -> None:
+    from sqlalchemy.exc import IntegrityError
+
+    from reply_mcfly.domain.email import OutboxEntry, ResponseType
+
+    job = harness.repository.claim(harness.enqueue(), uuid4())
+    entry = OutboxEntry(
+        job.id,
+        f"<reply-{job.id}@agent.invalid>",
+        "sender@customer.invalid",
+        "Subject",
+        "Body",
+        "<original@customer.invalid>",
+        "",
+        ResponseType.FALLBACK,
+    )
+    with pytest.raises(IntegrityError):
+        harness.repository.prepare(job, entry)
+    assert harness.repository.get(job.id).status == Status.PROCESSING
