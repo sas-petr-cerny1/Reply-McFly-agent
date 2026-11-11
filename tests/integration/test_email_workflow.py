@@ -1,3 +1,5 @@
+import base64
+import json
 import os
 from collections.abc import Iterator
 from concurrent.futures import ThreadPoolExecutor
@@ -6,6 +8,7 @@ from datetime import UTC, datetime, timedelta
 from uuid import UUID, uuid4
 
 import pytest
+from fastapi.testclient import TestClient
 from sqlalchemy import delete, insert, select, update
 from sqlalchemy.engine import Engine
 
@@ -13,9 +16,13 @@ from reply_mcfly.adapters.postgres_adapter import (
     EmailJobModel,
     EmailOutboxModel,
     MailboxSyncState,
+    PostgresAdapter,
     PostgresEmailRepository,
     make_engine,
 )
+from reply_mcfly.api.health import create_app
+from reply_mcfly.api.workflow import IngressServices, WorkerServices
+from reply_mcfly.application.diagnostics import DiagnosticsService
 from reply_mcfly.application.email_processing_service import EmailProcessingService
 from reply_mcfly.application.gmail_sync_service import GmailSyncService
 from reply_mcfly.application.reply_service import FallbackTemplates, ReplyService
@@ -330,6 +337,111 @@ def test_concurrent_workers_have_only_one_owner(harness: Harness) -> None:
     with ThreadPoolExecutor(max_workers=2) as pool:
         results = list(pool.map(lambda _: claim(), range(2)))
     assert sorted(results) == ["CLAIMED", "JOB_BUSY"]
+
+
+class SyntheticIdentityVerifier:
+    def verify(self, token: str) -> None:
+        if token != "synthetic-test-identity":
+            raise WorkflowError("UNAUTHORIZED", status=401)
+
+
+def http_services(harness: Harness) -> WorkerServices:
+    return WorkerServices(
+        harness.mailbox,
+        harness.sync,
+        harness.processing,
+        SyntheticIdentityVerifier(),
+    )
+
+
+def test_http_pipeline_and_duplicate_notification(harness: Harness) -> None:
+    services = http_services(harness)
+    ingress_services = IngressServices(harness.mailbox, harness.queue, SyntheticIdentityVerifier())
+    diagnostics = DiagnosticsService(PostgresAdapter(harness.engine))
+    auth = {"Authorization": "Bearer synthetic-test-identity"}
+    notification = {
+        "message": {
+            "messageId": "notification1",
+            "data": base64.b64encode(
+                json.dumps({"emailAddress": harness.mailbox, "historyId": "200"}).encode()
+            ).decode(),
+        }
+    }
+    with (
+        TestClient(create_app("ingress", diagnostics, ingress_services)) as ingress,
+        TestClient(create_app("worker", diagnostics, services)) as worker,
+    ):
+        for _ in range(2):
+            assert ingress.post("/events/gmail", headers=auth, json=notification).status_code == 204
+            # Fake queue dispatch; no Google network calls in this local integration test.
+            for mailbox, _ in harness.queue.events[-1:]:
+                assert (
+                    worker.post(
+                        "/tasks/sync", headers=auth, json={"mailbox_id": mailbox}
+                    ).status_code
+                    == 200
+                )
+            response = worker.post(
+                "/tasks/process", headers=auth, json={"job_id": str(harness.queue.jobs[-1])}
+            )
+            assert response.status_code == 200
+            assert response.json() == {"status": "SENT"}
+    assert harness.gmail.send_calls == 1
+
+
+def test_http_auth_and_mailbox_validation(harness: Harness) -> None:
+    diagnostics = DiagnosticsService(PostgresAdapter(harness.engine))
+    with TestClient(create_app("worker", diagnostics, http_services(harness))) as worker:
+        assert worker.post("/tasks/sync", json={"mailbox_id": harness.mailbox}).status_code == 401
+        assert (
+            worker.post(
+                "/tasks/sync",
+                headers={"Authorization": "Bearer invalid"},
+                json={"mailbox_id": harness.mailbox},
+            ).status_code
+            == 401
+        )
+        response = worker.post(
+            "/tasks/sync",
+            headers={"Authorization": "Bearer synthetic-test-identity"},
+            json={"mailbox_id": "other@agent.invalid"},
+        )
+        assert response.status_code == 403
+        assert response.json()["error"]["code"] == "FORBIDDEN"
+
+
+def test_http_invalid_requests_do_not_echo_inputs(harness: Harness) -> None:
+    diagnostics = DiagnosticsService(PostgresAdapter(harness.engine))
+    auth = {"Authorization": "Bearer synthetic-test-identity"}
+    with TestClient(create_app("worker", diagnostics, http_services(harness))) as worker:
+        response = worker.post(
+            "/tasks/process", headers=auth, json={"job_id": "private-input-not-a-uuid"}
+        )
+        assert response.status_code == 400
+        assert "private-input" not in response.text
+        response = worker.post("/tasks/process", headers=auth, json={"job_id": str(uuid4())})
+        assert response.status_code == 404
+        response = worker.post(
+            "/tasks/process",
+            headers=auth,
+            json={"job_id": str(uuid4()), "recipient": "attacker@other.invalid"},
+        )
+        assert response.status_code == 400
+
+
+def test_http_unknown_delivery_requests_verification_only(harness: Harness) -> None:
+    diagnostics = DiagnosticsService(PostgresAdapter(harness.engine))
+    auth = {"Authorization": "Bearer synthetic-test-identity"}
+    harness.gmail.uncertain = True
+    job_id = harness.enqueue()
+    with TestClient(create_app("worker", diagnostics, http_services(harness))) as worker:
+        first = worker.post("/tasks/process", headers=auth, json={"job_id": str(job_id)})
+        assert first.status_code == 503
+        assert first.json()["error"]["code"] == "DELIVERY_UNKNOWN"
+        second = worker.post("/tasks/process", headers=auth, json={"job_id": str(job_id)})
+        assert second.status_code == 200
+        assert second.json()["status"] == "SENT"
+    assert harness.gmail.send_calls == 1
 
 
 def test_repository_deduplicates_jobs(harness: Harness) -> None:
