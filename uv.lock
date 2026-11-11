@@ -1207,7 +1207,6 @@ dev = [
     { name = "types-protobuf", specifier = ">=7.35.1.20260906" },
 ]
 
-
 [[package]]
 name = "requests"
 version = "2.34.2"
