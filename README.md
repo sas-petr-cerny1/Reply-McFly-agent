@@ -1,11 +1,16 @@
 # Reply McFly agent
 
-Lokální textový workflow navazující na RM-001 podle `docs/reply_mcfly_agent_BLUEPRINT.md`
-a schválených upřesnění. Python 3.12, FastAPI Ingress a Worker ze stejného image,
-PostgreSQL 17 / pgvector, SQLAlchemy 2 a Alembic.
+Lokální textový workflow navazující na RM-001 a schválených upřesnění.
+Python 3.12, FastAPI Ingress a Worker ze stejného image, PostgreSQL 17 / pgvector,
+SQLAlchemy 2 a Alembic.
+
+Adresář `docs/` je v `.gitignore` a **není součástí Gitu** (blueprint, JSON požadavky,
+Cloud Shell runbook a handoffy drž lokálně mimo verzování). Klon repozitáře je jen
+aplikace, migrace a tento README.
 
 **Lokální část je ověřená; skutečný Gmail/GCP E2E a cíl 120 sekund jsou NESPLNĚNÉ.**
-[Příkazy pro Cloud Shell, inventura a odhad nákladů](docs/operations/GCP_CLOUD_SHELL.md).
+Cloud Shell příkazy a inventura jsou v lokálním `docs/operations/GCP_CLOUD_SHELL.md`, pokud
+máš projektový balíček dokumentace k dispozici.
 
 ## Spuštění v Dockeru
 
@@ -104,6 +109,23 @@ Reprodukovatelný lokální HTTP průchod s JSON auditními logy:
 docker compose run --rm tests pytest -q -s tests/integration/test_email_workflow.py::test_http_pipeline_and_duplicate_notification
 ```
 
+## Lokální live-email (mimo Pub/Sub)
+
+Volitelný průchod **jedné** Gmail zprávy přes stejný processing stack jako Worker.
+Default je **dry-run** (`READY_TO_SEND`, bez `gmail.send`). Skutečné API volání vyžaduje
+OAuth soubor mimo repozitář a explicitní allowlist v `.env`; `--send` použij jen po schválení.
+
+```sh
+# Po docker compose up a lokálním OAuth (viz oauth_setup); credentials mimo repo, mode 0600
+docker compose exec -T worker python -m reply_mcfly.live_email --message-id GMAIL_MESSAGE_ID
+```
+
+Příklad s odesláním (jen po vlastním schválení schránky a allowlistu):
+
+```sh
+docker compose exec -T worker python -m reply_mcfly.live_email --message-id GMAIL_MESSAGE_ID --send
+```
+
 Struktura: `api/` řeší HTTP a autentizaci, `application/` orchestraci, `domain/` pravidla
 příjemce, grounding a šablony, `ports/` rozhraní, `adapters/` PostgreSQL/Google I/O.
 Migrace 0002 přidává jobs/outbox a fencing tokeny; 0003 důkazy a constraint odpovědi.
@@ -161,8 +183,7 @@ potvrzení dedikované schránky a allowlistu zůstává na navazující krok.
 ## Ověření při rekonstrukci Git historie — 11. 11. 2026
 
 C01–C20 a B01–B09 jsou logická rekonstrukce současných zdrojů, nikoliv původní
-historické snapshoty. Přehled commitů a merge větví je v
-[existujícím handoffu](docs/reply-mcfly-git-history-handoff-mz60x3r1.md).
+historické snapshoty. Přehled commitů a merge větví drž lokálně v `docs/` (mimo Git).
 Původní aplikační zdroje, dependency verze a `.gitignore` zůstaly zachované.
 Doplněny byly testy Gemini SDK, OAuth/Watch a repository kontraktů z plánu.
 
@@ -190,3 +211,13 @@ Docker build/start a nový image audit proběhly pro finální snímek; samostat
 build a image audit každé rekonstruované větve nebyly provedené. Restart persistence
 a DB outage/recovery nebyly při rekonstrukci znovu ověřené; starší výsledky výše jsou historické.
 Skutečné OAuth, Gmail/GCP E2E, latence 120 s a Cloud Run/AMD64 zůstávají neověřené.
+
+## Ověření po sjednocení do main — 11. 11. 2026
+
+| Kontrola | Výsledek |
+|---|---|
+| `docs/` v indexu Gitu | PASS; adresář jen lokálně, `.gitignore` |
+| `docker compose run --build --rm tests` | **90 passed in 4.17s**; + dry-run integrace a live-email unit testy, bez skipů |
+| Trivy runtime | **FAIL** beze změny (47 HIGH z rekonstrukce); release gate otevřený |
+
+Skutečné Gmail/Vertex volání v `live_email` nebylo součástí Docker pytest; jen fake/mocked testy.
