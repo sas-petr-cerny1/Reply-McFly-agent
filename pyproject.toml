@@ -16,6 +16,7 @@ dependencies = [
   "alembic>=1.14,<2",
   "google-api-python-client>=2,<3",
   "google-auth-httplib2>=0.2,<1",
+  "google-cloud-tasks>=2,<3",
   "google-cloud-secret-manager>=2,<3",
 ]
 
@@ -30,6 +31,7 @@ dev = [
   "google-api-python-client-stubs>=1.40.0",
   "types-httplib2>=0.32.1.20261029",
   "google-auth-stubs>=0.3.0",
+  "types-protobuf>=7.35.1.20260906",
 ]
 
 [tool.ruff]
