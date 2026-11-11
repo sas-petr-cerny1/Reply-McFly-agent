@@ -65,3 +65,7 @@ Očekávaný výsledek je `Persistence check: OK`. Záznam zůstává v pojmenov
 volume `postgres_data`. `docker compose stop` nebo `docker compose down`
 zastaví prostředí a zachová data. Parametr `down -v` smaže volume i data.
 Změna hesla v `.env` nemění heslo již inicializované databáze.
+
+
+Runtime a test stage běží pod UID 10001; build context vylučuje lokální credentials.
+Security release gate zůstává oddělený od lokální rekonstrukce historie.
