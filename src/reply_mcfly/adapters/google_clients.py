@@ -1,5 +1,6 @@
 import json
 from collections.abc import Callable
+from http.client import HTTPConnection, HTTPException
 from typing import Any, cast
 
 import google_auth_httplib2
@@ -18,6 +19,29 @@ class OAuthSecret(BaseModel):
     client_id: SecretStr
     client_secret: SecretStr
     refresh_token: SecretStr
+
+
+class OneShotHttp(httplib2.Http):
+    """Disable httplib2's implicit reconnect/resend after an ambiguous response."""
+
+    def _conn_request(
+        self,
+        conn: HTTPConnection,
+        request_uri: str,
+        method: str,
+        body: bytes | str | None,
+        headers: dict[str, str],
+    ) -> tuple[httplib2.Response, bytes]:
+        headers = {**headers, "accept-encoding": "identity"}
+        try:
+            if conn.sock is None:
+                conn.connect()
+            conn.request(method, request_uri, body, headers)
+            response = conn.getresponse()
+            return httplib2.Response(response), response.read()
+        except (OSError, HTTPException):
+            conn.close()
+            raise
 
 
 class GmailServiceFactory:
@@ -46,7 +70,7 @@ class GmailServiceFactory:
                     "https://www.googleapis.com/auth/gmail.send",
                 ],
             )
-            http = httplib2.Http(timeout=10)
+            http = OneShotHttp(timeout=10)
             http.follow_redirects = False
             transport = google_auth_httplib2.AuthorizedHttp(
                 credentials, http=http, max_refresh_attempts=0

@@ -11,6 +11,7 @@ from email.message import EmailMessage, MIMEPart
 from email.parser import BytesParser
 from email.utils import getaddresses
 from html.parser import HTMLParser
+from http.client import HTTPException
 from typing import Any
 
 from google.auth.exceptions import GoogleAuthError
@@ -211,7 +212,7 @@ class GmailAdapter:
             raise WorkflowError(
                 "GMAIL_API_ERROR", retryable=status in {408, 429} or status >= 500, status=503
             ) from None
-        except (OSError, HttpLib2Error, GoogleAuthError):
+        except (OSError, HttpLib2Error, GoogleAuthError, HTTPException):
             raise WorkflowError("GMAIL_API_ERROR", retryable=True, status=503) from None
         except ValueError:
             raise WorkflowError("INVALID_GMAIL_RESPONSE", status=503) from None
