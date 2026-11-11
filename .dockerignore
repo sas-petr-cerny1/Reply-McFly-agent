@@ -8,6 +8,8 @@
 !alembic.ini
 !tests/
 !tests/**
+!typings/
+!typings/**
 **/__pycache__/
 **/.env*
 **/*.pem
