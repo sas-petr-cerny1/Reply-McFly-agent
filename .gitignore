@@ -44,6 +44,7 @@ data/attachments/
 tmp/
 temp/
 downloads/
+docs/
 
 # Logs
 *.log
