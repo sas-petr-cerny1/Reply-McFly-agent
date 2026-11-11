@@ -1,4 +1,4 @@
-from pydantic import PostgresDsn, SecretStr
+from pydantic import Field, PostgresDsn, SecretStr
 from pydantic_settings import BaseSettings, SettingsConfigDict
 
 
@@ -6,6 +6,11 @@ class Settings(BaseSettings):
     model_config = SettingsConfigDict(env_prefix="MCFLY_", extra="ignore")
 
     database_url: SecretStr | None = None
+
+    gcp_project_id: str = Field(default="reply-mcfly-poc", validation_alias="GCP_PROJECT_ID")
+    gcp_region: str = Field(default="europe-west1", validation_alias="GCP_REGION")
+    vertex_ai_location: str = Field(default="eu", validation_alias="VERTEX_AI_LOCATION")
+    gemini_model: str = Field(default="gemini-3.5-flash", validation_alias="GEMINI_MODEL")
 
     def sqlalchemy_url(self) -> str:
         if self.database_url is None:
