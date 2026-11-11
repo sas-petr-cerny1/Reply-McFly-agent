@@ -20,6 +20,7 @@ RUN uv sync --frozen --no-dev
 FROM build AS test
 RUN uv sync --frozen
 COPY tests ./tests
+COPY typings ./typings
 ENV PYTEST_ADDOPTS="-o cache_dir=/tmp/pytest-cache" MYPY_CACHE_DIR=/tmp/mypy-cache RUFF_CACHE_DIR=/tmp/ruff-cache
 USER app
 CMD ["pytest"]

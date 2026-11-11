@@ -14,6 +14,9 @@ dependencies = [
   "sqlalchemy>=2.0,<2.1",
   "psycopg[binary]>=3.2,<4",
   "alembic>=1.14,<2",
+  "google-api-python-client>=2,<3",
+  "google-auth-httplib2>=0.2,<1",
+  "google-cloud-secret-manager>=2,<3",
 ]
 
 [dependency-groups]
@@ -24,6 +27,9 @@ dev = [
   "pip-audit>=2.9,<3",
   "bandit>=1.8,<2",
   "httpx2>=2.16.0",
+  "google-api-python-client-stubs>=1.40.0",
+  "types-httplib2>=0.32.1.20261029",
+  "google-auth-stubs>=0.3.0",
 ]
 
 [tool.ruff]
@@ -38,6 +44,7 @@ python_version = "3.12"
 strict = true
 files = ["src", "tests", "migrations"]
 plugins = ["pydantic.mypy"]
+mypy_path = ["typings"]
 
 [tool.pytest.ini_options]
 testpaths = ["tests"]
