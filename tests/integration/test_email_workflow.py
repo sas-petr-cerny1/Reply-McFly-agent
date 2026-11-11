@@ -9,7 +9,7 @@ from uuid import UUID, uuid4
 
 import pytest
 from fastapi.testclient import TestClient
-from sqlalchemy import delete, insert, select, update
+from sqlalchemy import delete, select, update
 from sqlalchemy.engine import Engine
 
 from reply_mcfly.adapters.postgres_adapter import (
@@ -121,10 +121,7 @@ class Harness:
         self.engine = engine
         self.mailbox = f"{uuid4()}@agent.invalid"
         self.repository = PostgresEmailRepository(engine)
-        with engine.begin() as connection:
-            connection.execute(
-                insert(MailboxSyncState).values(mailbox_id=self.mailbox, history_id="100")
-            )
+        self.repository.initialize(self.mailbox, "100", datetime.now(UTC) + timedelta(days=1))
         self.gmail = FakeGmail()
         self.queue = FakeQueue()
         self.runner = FakeRunner()
@@ -485,3 +482,20 @@ def test_database_rejects_fallback_without_reason(harness: Harness) -> None:
     with pytest.raises(IntegrityError):
         harness.repository.prepare(job, entry)
     assert harness.repository.get(job.id).status == Status.PROCESSING
+
+
+def test_watch_renewal_preserves_existing_checkpoint(harness: Harness) -> None:
+    renewed = datetime.now(UTC) + timedelta(days=2)
+    harness.repository.initialize(harness.mailbox, "999", renewed)
+    token = uuid4()
+    assert harness.repository.acquire_sync(harness.mailbox, token) == "100"
+    harness.repository.release_sync(harness.mailbox, token)
+    with harness.engine.connect() as connection:
+        assert (
+            connection.execute(
+                select(MailboxSyncState.watch_expiration).where(
+                    MailboxSyncState.mailbox_id == harness.mailbox
+                )
+            ).scalar_one()
+            == renewed
+        )

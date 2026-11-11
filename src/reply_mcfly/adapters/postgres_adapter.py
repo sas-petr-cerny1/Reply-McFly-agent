@@ -156,6 +156,21 @@ class PostgresEmailRepository:
         self.engine = engine
         self.max_attempts = max_attempts
 
+    def initialize(self, mailbox_id: str, history_id: str, expiration: datetime | None) -> None:
+        with Session(self.engine) as session, session.begin():
+            session.execute(
+                insert(MailboxSyncState)
+                .values(mailbox_id=mailbox_id, history_id=history_id, watch_expiration=expiration)
+                .on_conflict_do_nothing(index_elements=["mailbox_id"])
+            )
+            row = session.get(MailboxSyncState, mailbox_id, with_for_update=True)
+            if row is None:
+                raise WorkflowError("MAILBOX_INITIALIZATION_FAILED", retryable=True, status=503)
+            if row.history_id is None:
+                row.history_id = history_id
+            if expiration is not None:
+                row.watch_expiration = expiration
+
     def acquire_sync(self, mailbox_id: str, token: UUID) -> str:
         with Session(self.engine) as session, session.begin():
             row = session.get(MailboxSyncState, mailbox_id, with_for_update=True)
