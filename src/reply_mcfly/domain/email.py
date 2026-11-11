@@ -1,6 +1,8 @@
+import re
 from dataclasses import dataclass
 from datetime import datetime
 from enum import StrEnum
+from typing import Literal
 from uuid import UUID
 
 from pydantic import BaseModel, ConfigDict, Field
@@ -62,9 +64,18 @@ class IncomingEmail:
     unsupported_attachment: bool = False
 
 
+class Evidence(BaseModel):
+    model_config = ConfigDict(extra="forbid", strict=True)
+    source_id: str = Field(min_length=1, max_length=512)
+    exact_quote: str = Field(min_length=1, max_length=5000)
+
+
 class ReplyDraft(BaseModel):
     model_config = ConfigDict(extra="forbid", strict=True)
+    response_type: Literal["GENERATED", "FALLBACK"]
     proposed_reply: str = Field(max_length=10000)
+    evidence: list[Evidence] = Field(max_length=8)
+    missing_information: list[str] = Field(max_length=10)
     requires_review: bool
 
 
@@ -102,6 +113,7 @@ class OutboxEntry:
     references: str
     response_type: ResponseType = ResponseType.GENERATED
     fallback_reason: FallbackReason | None = None
+    evidence: tuple[tuple[str, str], ...] = ()
 
 
 def require_mailbox(actual: str, allowed: str) -> None:
@@ -112,4 +124,67 @@ def require_mailbox(actual: str, allowed: str) -> None:
 def incoming(metadata: MessageMetadata) -> bool:
     return {"INBOX", "UNREAD"} <= metadata.labels and not (
         {"SENT", "DRAFT", "SPAM", "TRASH"} & metadata.labels
+    )
+
+
+def validate_recipient(job: Job, email: IncomingEmail, recipients: frozenset[str]) -> None:
+    if (
+        email.metadata.message_id != job.gmail_message_id
+        or email.metadata.thread_id != job.gmail_thread_id
+    ):
+        raise WorkflowError("MESSAGE_THREAD_MISMATCH")
+    if (
+        email.automatic
+        or email.sender.casefold() == job.mailbox_id.casefold()
+        or email.sender.casefold() not in recipients
+    ):
+        raise WorkflowError("RECIPIENT_REQUIRES_REVIEW")
+    for value in (email.sender, email.subject, email.message_id_header, email.references):
+        if "\r" in value or "\n" in value or len(value) > 998:
+            raise WorkflowError("INVALID_REPLY_HEADERS")
+    if not re.fullmatch(r"<[^<>\s]+@[^<>\s]+>", email.message_id_header):
+        raise WorkflowError("INVALID_MESSAGE_ID")
+    # Additional review triggers. Structural quote-only verification is the primary safeguard.
+    if re.search(
+        r"ignore\s+(?:all\s+|previous\s+|prior\s+)?instructions|"
+        r"ignoruj.{0,40}(?:instrukce|pravidla)|system\s+prompt|"
+        r"(?:api[_ -]?key|access[_ -]?token|refresh[_ -]?token|password|heslo)\s*[:=]|"
+        r"-----BEGIN.{0,30}PRIVATE KEY|\bya29\.",
+        email.text,
+        re.IGNORECASE,
+    ):
+        raise WorkflowError("UNTRUSTED_CONTENT_REQUIRES_REVIEW")
+
+
+def prepare_reply(
+    job: Job,
+    email: IncomingEmail,
+    body: str,
+    recipients: frozenset[str],
+    response_type: ResponseType = ResponseType.GENERATED,
+    fallback_reason: FallbackReason | None = None,
+    evidence: tuple[tuple[str, str], ...] = (),
+) -> OutboxEntry:
+    validate_recipient(job, email, recipients)
+    if (
+        not body.strip()
+        or len(body) > 10000
+        or any(ord(c) < 32 and c not in "\n\t\r" for c in body)
+    ):
+        raise WorkflowError("REPLY_REQUIRES_REVIEW")
+    if (response_type == ResponseType.FALLBACK) != (fallback_reason is not None):
+        raise WorkflowError("INVALID_RESPONSE_TYPE")
+    if email.has_attachments and not email.unsupported_attachment:
+        raise WorkflowError("ATTACHMENT_REQUIRES_REVIEW")
+    return OutboxEntry(
+        job_id=job.id,
+        outbound_message_id=f"<reply-mcfly-{job.id}@{job.mailbox_id.split('@')[-1]}>",
+        recipient=email.sender,
+        subject=email.subject,
+        draft_body=body,
+        in_reply_to=email.message_id_header,
+        references=" ".join((email.references + " " + email.message_id_header).split()),
+        response_type=response_type,
+        fallback_reason=fallback_reason,
+        evidence=evidence,
     )
