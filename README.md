@@ -134,8 +134,151 @@ Malé lokální typové stuby v `typings/` doplňují chybějící SDK anotace, 
 ta procházejí Pydantic a doménovými kontrolami. Závislosti jsou uzamčené v `uv.lock`.
 Runtime běží jako non-root, bez `.env`, testů, docs, Git historie a buildovacího `uv`.
 
-Conversation History, RAG a Live Web Search mají rozhraní v `ports/capabilities.py`;
-jejich implementace je navazující práce a všechny tři zůstávají povinné pro finální PoC.
+### Jednoduchý lokální E2E: RAG + conversation history + thread messages
+
+V aktuální aplikaci je conversation history tvořená staršími zprávami **stejného Gmail
+vlákna** (`thread_history`), včetně odpovědí agenta. Nejde o další samostatnou paměť
+konverzací. RAG používá oddělenou lokální Markdown KB; e-maily se do ní neindexují.
+
+Opakovatelný test bez skutečného odesílání a bez OAuth:
+
+```sh
+docker compose build tests
+docker compose run --rm --no-deps tests pytest -v tests/integration/test_email_workflow.py -k test_local_rag_conversation_e2e
+```
+
+Předpoklad: PostgreSQL a migrace již běží (`docker compose up -d --wait`). Test používá
+skutečné Gmail/Gemini adaptéry, MIME parser, Markdown retrieval, validátor, PostgreSQL
+a outbox. Google API jsou mockovaná až na hranici SDK; tento test neověřuje živý model
+ani Gmail doručení. Syntetické DB záznamy po sobě odstraní.
+
+Scénář má starší zákaznickou zprávu s `RM-E2E-105`, starší automatickou odpověď agenta
+„Prosíme o datum převzetí zařízení.“ a nový dotaz bez těchto údajů. Odpověď musí použít
+oba historické zdroje `thread:…` a pravidlo o spoluúčasti `390 Kč` z `rag:KB01_…`.
+Test kontroluje také vynechání cizího odesílatele a budoucí zprávy, dry-run bez sendu,
+obnovení uloženého outboxu, reply hlavičky a opakované zpracování se stejným jobem
+a jediným voláním send. Celkem běží čtyři varianty zapnutí/vypnutí historie a RAG;
+při neúplném kontextu řízená odpověď modelu volí schválený fallback.
+
+### Stejný scénář se skutečným Gmailem a Gemini
+
+Tento ruční test používá existující lokální helper `~/Downloads/reply_mcfly_send_once.py`
+(není součástí repozitáře), připravené OAuth/ADC a stávající allowlist. Příkazy se
+spouštějí v kořeni projektu. `--send` skutečně odešle odpověď.
+
+1. Z povolené zákaznické adresy pošli do dedikované schránky novou zprávu s unikátním
+   předmětem `RM POC RAG HISTORY 01` a textem:
+
+   ```text
+   Dobrý den,
+
+   číslo mého testovacího požadavku je RM-POC-7429.
+   Moje zařízení se službou DemoBox+ bylo náhodně polité vodou.
+
+   Prosím potvrďte, jaké číslo požadavku a jaký problém jsem uvedl.
+
+   Děkuji.
+   ```
+
+   Zpráva musí být v INBOX a nepřečtená. Zpracuj ji:
+
+   ```sh
+   MCFLY_ENABLE_RAG=true MCFLY_ENABLE_THREAD_HISTORY=true \
+     uv run python ~/Downloads/reply_mcfly_send_once.py \
+     --subject "RM POC RAG HISTORY 01" --send
+   ```
+
+   Očekávání: `SENT`, jedna nová odpověď ve stejném vlákně, obsahuje `RM-POC-7429`.
+
+2. V zákaznické schránce otevři první doručenou odpověď od agenta a přímo u ní použij
+   **Odpovědět**. Ponech předmět: Gmail musí zachovat stejné `threadId`; nový e-mail
+   se stejným předmětem může založit jiné vlákno bez historie. Odstraň automaticky
+   citovaný původní text, aby číslo požadavku nebylo i v aktuální zprávě. Pošli pouze:
+
+   ```text
+   Jaké číslo požadavku jsem uvedl a co se mému zařízení stalo?
+   Jaké krytí, spoluúčast, měsíční cenu a limit událostí má podle vaší dokumentace služba DemoBox+?
+   ```
+
+   Produkt je záměrně uveden i v novém dotazu: retrieval query se sestavuje z aktuální
+   zprávy a příloh, nikoli z historie. Nová zpráva musí zůstat nepřečtená. Připrav ji
+   nejdřív bez odeslání; `--subject` musí přesně odpovídat jejímu předmětu:
+
+   ```sh
+   MCFLY_ENABLE_RAG=true MCFLY_ENABLE_THREAD_HISTORY=true \
+     uv run python ~/Downloads/reply_mcfly_send_once.py \
+     --subject "Re: RM POC RAG HISTORY 01"
+   ```
+
+   Očekávání: `READY_TO_SEND`. Z posledního JSON řádku zkopíruj `job_id` a ověř důkazy
+   v uloženém outboxu (nahraď `JOB_UUID`):
+
+   ```sh
+   docker compose exec -T worker python - JOB_UUID <<'PY'
+   import sys
+   from uuid import UUID
+   from reply_mcfly.adapters.postgres_adapter import PostgresEmailRepository, make_engine
+   from reply_mcfly.config.settings import Settings
+   from reply_mcfly.domain.email import ResponseType, Status
+
+   engine = make_engine(Settings().sqlalchemy_url())
+   try:
+       repository = PostgresEmailRepository(engine)
+       job_id = UUID(sys.argv[1])
+       assert repository.get(job_id).status == Status.READY_TO_SEND
+       entry = repository.outbox(job_id)
+       assert entry is not None and entry.response_type == ResponseType.GENERATED
+       assert "RM-POC-7429" in entry.draft_body
+       assert "390 Kč" in entry.draft_body
+       assert "179 Kč" in entry.draft_body
+       assert "2 uznané škodní události" in entry.draft_body
+       assert "12 po sobě jdoucích měsíců" in entry.draft_body
+       assert any(s.startswith("thread:") and "RM-POC-7429" in q for s, q in entry.evidence)
+       assert any(s.startswith("rag:KB01_") and "390 Kč" in q for s, q in entry.evidence)
+       assert any(s.startswith("thread:") and "vodou" in q for s, q in entry.evidence)
+       for fact in ("polití kapalinou", "179 Kč", "2 uznané škodní události"):
+           assert any(s.startswith("rag:KB01_") and fact in q for s, q in entry.evidence)
+       print("PASS: outbox obsahuje historii a krytí, spoluúčast, cenu i limit z KB.")
+   finally:
+       engine.dispose()
+   PY
+   ```
+
+3. Po úspěšné kontrole můžeš stejným helperem a předmětem spustit `--send`, opět
+   s oběma proměnnými nastavenými na `true`. Worker znovu ověří uložené důkazy
+   a odešle již připravenou odpověď. Očekávání: `SENT`, právě jedna nová odpověď
+   ve stejném vlákně, `RM-POC-7429` a `390 Kč` v jejím těle.
+
+Každé nové celé opakování scénáře dělej s novým unikátním předmětem. Samotné `SENT`
+neprokazuje RAG ani historii; rozhodující jsou oba zdroje v outboxu a obsah odpovědi.
+Helper očekává právě jeden **nový** odeslaný e-mail, takže jeho opakované `--send`
+nad již dokončenou zprávou není testem deduplikace. Tu ověřuje lokální test výše.
+
+Při `INVALID_EVIDENCE` zůstává validátor přísný: i odstranění Markdown značek `**`
+znamená neplatnou citaci. Instrukce Gemini proto výslovně vyžaduje kopírování všech
+znaků zdroje. Job ve stavu `REVIEW_REQUIRED` se automaticky neopakuje; pro další
+ověření pošli nový dotaz. Před výběrem helperem označ starší dotazy stejného předmětu
+jako přečtené, aby odpovídal právě jeden nepřečtený e-mail.
+
+Ověření 12. 11. 2026: skutečný lokální Gmail/Vertex dry-run nad novým dotazem ve
+správném vlákně dosáhl `READY_TO_SEND` za 7,517 s. Aktuální zpráva neobsahovala
+číslo požadavku ani popis nehody; uložený outbox měl dvě platné citace `thread:`
+a čtyři `rag:KB01_` se všemi šesti očekávanými údaji. Celá Docker sada měla
+153 passed. Po výslovném schválení následovalo odeslání stejného outboxu se stavem
+`SENT`. Nezávislá kontrola Gmailu ověřila právě jednu novou SENT odpověď ve správném
+vlákně, uložené Gmail API ID, příjemce, `In-Reply-To`, `References` a shodu těla
+s outboxem při zohlednění SMTP konců řádků. Jde o lokální CLI E2E s ruční pauzou
+na schválení, nikoliv o měření automatického Pub/Sub/Cloud Tasks průchodu.
+
+Zachycené omezení: u této zprávy Gmail změnil odeslaný RFC `Message-ID`. Potvrzení
+doručení výše používá Gmail API ID uložené z výsledku sendu. Stávající obnova
+`DELIVERY_UNKNOWN` hledá podle původního RFC `Message-ID`; její spolehlivost při této
+změně zůstává otevřeným bodem. Žádné opakované odeslání nebylo provedeno.
+
+Conversation History a RAG jsou implementované za přepínači
+`MCFLY_ENABLE_THREAD_HISTORY=true` a `MCFLY_ENABLE_RAG=true` (výchozí stav je vypnuto).
+Live Web Search má rozhraní v `ports/capabilities.py`; jeho implementace zůstává
+navazující prací a povinnou součástí finálního PoC.
 Podporované přílohy se v textovém slice neinterpretují a míří k ruční kontrole.
 U zjištěného nepodporovaného MIME může následovat schválený fallback; bezpečně ověřitelný
 text může projít i bez využití takové přílohy. Detekce poškození a kontrola skutečných

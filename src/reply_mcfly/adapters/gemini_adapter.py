@@ -31,6 +31,10 @@ when grounded in those same sources. Do not claim a case was filed, approved, or
 were shipped unless a source explicitly states it.
 For GENERATED, select only exact_quote passages that are contiguous substrings of the current
 source_id, thread_history source_ids, attachment_passages source_ids, or rag_passages source_ids.
+Copy evidence verbatim from the supplied source text, including Markdown punctuation such as
+**bold markers**, list prefixes, accents, spaces, and line breaks. Never render Markdown as
+plain text in exact_quote. For example, "- **Label:** value." must not become "Label: value.".
+Prefer copying one complete source line per evidence item; use separate items for separate lines.
 Do not claim facts beyond those exact passages.
 Answer every part of the customer question that is substantiated by available sources. When
 attachment_passages are present, use attachment source_ids for facts that appear only in

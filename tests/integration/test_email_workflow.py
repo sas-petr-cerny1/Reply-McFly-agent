@@ -6,9 +6,10 @@ from concurrent.futures import ThreadPoolExecutor
 from dataclasses import replace
 from datetime import UTC, datetime, timedelta
 from email import policy
+from email.message import EmailMessage
 from email.parser import BytesParser
 from pathlib import Path
-from unittest.mock import patch
+from unittest.mock import MagicMock, patch
 from uuid import UUID, uuid4
 
 import pytest
@@ -33,6 +34,7 @@ from reply_mcfly.api.workflow import IngressServices, WorkerServices, build_serv
 from reply_mcfly.application.diagnostics import DiagnosticsService
 from reply_mcfly.application.email_processing_service import EmailProcessingService
 from reply_mcfly.application.gmail_sync_service import GmailSyncService
+from reply_mcfly.application.live_email_runner import LiveEmailRunner
 from reply_mcfly.application.reply_service import FallbackTemplates, ReplyService
 from reply_mcfly.config.settings import Settings
 from reply_mcfly.domain.email import (
@@ -523,6 +525,185 @@ def test_watch_renewal_preserves_existing_checkpoint(harness: Harness) -> None:
         )
 
 
+@pytest.mark.parametrize("history_enabled", [True, False], ids=["history-on", "history-off"])
+@pytest.mark.parametrize("rag_enabled", [True, False], ids=["rag-on", "rag-off"])
+def test_local_rag_conversation_e2e(
+    harness: Harness,
+    monkeypatch: pytest.MonkeyPatch,
+    history_enabled: bool,
+    rag_enabled: bool,
+) -> None:
+    """Local E2E: real adapters/KB/DB, Google API responses mocked at SDK boundaries."""
+    monkeypatch.setenv("MCFLY_ENABLE_THREAD_HISTORY", str(history_enabled).lower())
+    sender = harness.gmail.email.sender
+    thread_id = "rag-history-thread"
+    customer_quote = "Číslo mého požadavku je RM-E2E-105."
+    agent_quote = "Prosíme o datum převzetí zařízení."
+    question = (
+        "Jaké číslo požadavku jsem uvedl a jaký údaj jste ode mě chtěli? "
+        "Jaká je spoluúčast DemoBox+?"
+    )
+    policy_quote = "- **Spoluúčast:** 390 Kč za každou uznanou škodní událost."
+    now = datetime.now(UTC)
+    payloads: dict[str, dict[str, object]] = {}
+    for index, (identifier, author, text) in enumerate(
+        [
+            ("original", sender, customer_quote),
+            ("agent-reply", harness.mailbox, agent_quote),
+            ("other-sender", "stranger@customer.invalid", "FOREIGN-SENDER-CANARY"),
+            ("follow-up", sender, question),
+            ("future", sender, "FUTURE-MESSAGE-CANARY"),
+        ]
+    ):
+        message = EmailMessage()
+        message["From"] = author
+        message["To"] = sender if author == harness.mailbox else harness.mailbox
+        message["Subject"] = "Re: RM RAG HISTORY E2E"
+        message["Message-ID"] = f"<{identifier}@synthetic.invalid>"
+        if identifier == "follow-up":
+            message["References"] = "<original@synthetic.invalid> <agent-reply@synthetic.invalid>"
+        if author == harness.mailbox:
+            message["Auto-Submitted"] = "auto-replied"
+        message.set_content(text)
+        payloads[identifier] = {
+            "id": identifier,
+            "threadId": thread_id,
+            "internalDate": str(int((now - timedelta(minutes=5 - index)).timestamp() * 1000)),
+            "labelIds": ["SENT"] if author == harness.mailbox else ["INBOX", "UNREAD"],
+            "raw": base64.urlsafe_b64encode(message.as_bytes()).decode("ascii"),
+        }
+    api = MagicMock()
+    users = api.users.return_value
+    users.getProfile.return_value.execute.return_value = {"emailAddress": harness.mailbox}
+    users.threads.return_value.get.return_value.execute.return_value = {
+        "id": thread_id,
+        "messages": [{"id": identifier} for identifier in payloads],
+    }
+
+    def get_message(*, userId: str, id: str, format: str) -> MagicMock:
+        assert userId == "me" and format in {"raw", "metadata"}
+        return MagicMock(execute=MagicMock(return_value=payloads[id]))
+
+    messages = users.messages.return_value
+    messages.get.side_effect = get_message
+    messages.send.return_value.execute.return_value = {"id": "sent-reply", "threadId": thread_id}
+    gmail = GmailAdapter(lambda: api, harness.mailbox)
+    processing = EmailProcessingService(
+        harness.repository,
+        gmail,
+        GeminiAdapter("synthetic-project", "eu", "synthetic-model"),
+        harness.mailbox,
+        harness.replies,
+        rag=MarkdownRAGProvider(),
+        enable_rag=rag_enabled,
+    )
+    live = LiveEmailRunner(harness.repository, gmail, processing, harness.mailbox)
+
+    def respond(
+        *, model: str, contents: str, config: types.GenerateContentConfig
+    ) -> types.GenerateContentResponse:
+        payload = json.loads(contents)
+        assert payload["untrusted_email_text"] == question
+        assert "RM-E2E-105" not in payload["untrusted_email_text"]
+        assert "390 Kč" not in payload["untrusted_email_text"]
+        history = payload["thread_history"]
+        assert history == (
+            [
+                {
+                    "source_id": "thread:original",
+                    "sender": sender,
+                    "untrusted_text": customer_quote,
+                },
+                {
+                    "source_id": "thread:agent-reply",
+                    "sender": harness.mailbox,
+                    "untrusted_text": agent_quote,
+                },
+            ]
+            if history_enabled
+            else []
+        )
+        assert "FOREIGN-SENDER-CANARY" not in contents
+        assert "FUTURE-MESSAGE-CANARY" not in contents
+        passages = payload["rag_passages"]
+        assert bool(passages) == rag_enabled
+        if rag_enabled:
+            assert len(passages) == 1
+            assert passages[0]["source_id"].startswith("rag:KB01_")
+            assert policy_quote in passages[0]["reference_text"]
+        complete = history_enabled and rag_enabled
+        draft = ReplyDraft(
+            response_type="GENERATED" if complete else "FALLBACK",
+            proposed_reply="Unverified model prose is discarded.",
+            evidence=(
+                [
+                    Evidence(source_id="thread:original", exact_quote=customer_quote),
+                    Evidence(source_id="thread:agent-reply", exact_quote=agent_quote),
+                    Evidence(source_id=passages[0]["source_id"], exact_quote=policy_quote),
+                ]
+                if complete
+                else []
+            ),
+            missing_information=[] if complete else ["Full answer requires history and KB"],
+            requires_review=False,
+        )
+        return types.GenerateContentResponse(
+            candidates=[
+                types.Candidate(
+                    finish_reason=types.FinishReason.STOP,
+                    content=types.Content(parts=[types.Part(text=draft.model_dump_json())]),
+                )
+            ]
+        )
+
+    with patch("reply_mcfly.adapters.gemini_adapter.genai.Client") as factory:
+        generate = factory.return_value.__enter__.return_value.models.generate_content
+        generate.side_effect = respond
+        prepared = live.run("follow-up")
+        assert prepared.status == Status.READY_TO_SEND
+        messages.send.assert_not_called()
+        entry = harness.repository.outbox(prepared.job_id)
+        assert entry is not None
+        if history_enabled and rag_enabled:
+            assert entry.response_type == ResponseType.GENERATED
+            assert customer_quote in entry.draft_body
+            assert agent_quote in entry.draft_body
+            assert policy_quote in entry.draft_body
+            assert [source.split(":", 1)[0] for source, _ in entry.evidence] == [
+                "thread",
+                "thread",
+                "rag",
+            ]
+        else:
+            assert entry.response_type == ResponseType.FALLBACK
+            assert entry.draft_body == FALLBACK_MISSING_INFORMATION
+            assert entry.evidence == ()
+        assert live.run("follow-up", send_enabled=True).status == Status.SENT
+        duplicate = live.run("follow-up", send_enabled=True)
+        assert duplicate.job_id == prepared.job_id
+        assert duplicate.status == Status.SENT
+        assert harness.repository.get(prepared.job_id).gmail_thread_id == thread_id
+        assert generate.call_count == 1
+        messages.send.assert_called_once()
+        send_body = messages.send.call_args.kwargs["body"]
+        assert send_body["threadId"] == thread_id
+        mime = BytesParser(policy=policy.default).parsebytes(
+            base64.urlsafe_b64decode(send_body["raw"])
+        )
+        assert str(mime["To"]) == sender
+        assert str(mime["In-Reply-To"]) == "<follow-up@synthetic.invalid>"
+        assert str(mime["References"]) == (
+            "<original@synthetic.invalid> <agent-reply@synthetic.invalid> "
+            "<follow-up@synthetic.invalid>"
+        )
+        body = mime.get_body(preferencelist=("plain",))
+        assert body is not None
+        # SMTP serializes line endings as CRLF; the stored draft uses LF.
+        assert body.get_content().strip().splitlines() == entry.draft_body.strip().splitlines()
+        assert "Unverified model prose" not in entry.draft_body
+        users.history.assert_not_called()
+
+
 class ExtractedAccessoryFacts:
     def enrich(self, email: IncomingEmail, timeout: float) -> IncomingEmail:
         return replace(
@@ -531,7 +712,9 @@ class ExtractedAccessoryFacts:
         )
 
 
-@pytest.mark.parametrize("scenario", ["kb01", "kb03", "mixed", "unknown", "forged", "changed"])
+@pytest.mark.parametrize(
+    "scenario", ["kb01", "kb03", "mixed", "unknown", "forged", "markdown", "changed"]
+)
 def test_rag_processing_through_gemini_and_outbox(
     harness: Harness, scenario: str, caplog: pytest.LogCaptureFixture, tmp_path: Path
 ) -> None:
@@ -542,6 +725,7 @@ def test_rag_processing_through_gemini_and_outbox(
         "mixed": "Chybí kabel v balení. Jak postupovat u dřívější objednávky?",
         "unknown": "Jaké je dnešní přesné ETA kurýra?",
         "forged": "Jaká je měsíční cena DemoBox+?",
+        "markdown": "Jaká je měsíční cena DemoBox+?",
         "changed": "Jaká je měsíční cena DemoBox+?",
     }[scenario]
     harness.gmail.email = replace(harness.gmail.email, text=query)
@@ -600,6 +784,8 @@ def test_rag_processing_through_gemini_and_outbox(
             source_id = passage["source_id"]
             if scenario == "forged":
                 source_id = "rag:KB99_fabricated:deadbeef"
+            if scenario == "markdown":
+                quote = quote.replace("**", "")
             evidence.append(Evidence(source_id=source_id, exact_quote=quote))
             if scenario in {"kb03", "mixed"}:
                 evidence.extend(
@@ -632,7 +818,7 @@ def test_rag_processing_through_gemini_and_outbox(
         generate = factory.return_value.__enter__.return_value.models.generate_content
         generate.side_effect = respond
         job_id = harness.enqueue()
-        if scenario == "forged":
+        if scenario in {"forged", "markdown"}:
             assert harness.processing.process(job_id) == Status.REVIEW_REQUIRED
             assert harness.repository.outbox(job_id) is None
             assert harness.gmail.send_calls == 0
