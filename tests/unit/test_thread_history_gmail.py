@@ -1,6 +1,8 @@
 """Fake Gmail API tests for thread isolation and bounded context."""
+
 import base64
 from email.message import EmailMessage
+from typing import TypedDict
 from unittest.mock import MagicMock
 
 import pytest
@@ -12,7 +14,17 @@ MAILBOX = "agent@example.invalid"
 SENDER = "sender@example.invalid"
 
 
-def make_payload(message_id: str, thread_id: str, stamp: int, sender: str, text: str):
+class GmailPayload(TypedDict):
+    id: str
+    threadId: str
+    internalDate: str
+    labelIds: list[str]
+    raw: str
+
+
+def make_payload(
+    message_id: str, thread_id: str, stamp: int, sender: str, text: str
+) -> GmailPayload:
     message = EmailMessage()
     message["From"] = sender
     message["To"] = MAILBOX
@@ -28,7 +40,9 @@ def make_payload(message_id: str, thread_id: str, stamp: int, sender: str, text:
     }
 
 
-def fake_service(payloads, order, *, thread_id="thread-a"):
+def fake_service(
+    payloads: dict[str, GmailPayload], order: list[str], *, thread_id: str = "thread-a"
+) -> MagicMock:
     service = MagicMock()
     service.users.return_value.getProfile.return_value.execute.return_value = {
         "emailAddress": MAILBOX,
@@ -38,7 +52,7 @@ def fake_service(payloads, order, *, thread_id="thread-a"):
         "messages": [{"id": item} for item in order],
     }
 
-    def message_get(*, userId, id, format):
+    def message_get(*, userId: str, id: str, format: str) -> MagicMock:
         assert userId == "me" and format == "raw"
         request = MagicMock()
         request.execute.return_value = payloads[id]
@@ -48,7 +62,9 @@ def fake_service(payloads, order, *, thread_id="thread-a"):
     return service
 
 
-def test_gmail_fetches_previous_same_thread_and_ignores_other_sender(monkeypatch):
+def test_gmail_fetches_previous_same_thread_and_ignores_other_sender(
+    monkeypatch: pytest.MonkeyPatch,
+) -> None:
     monkeypatch.setenv("MCFLY_ENABLE_THREAD_HISTORY", "true")
     payloads = {
         "m0": make_payload("m0", "thread-a", 1000, SENDER, "Ref ID: 3456"),
@@ -62,7 +78,7 @@ def test_gmail_fetches_previous_same_thread_and_ignores_other_sender(monkeypatch
     assert "Secret" not in str(email.thread_history)
 
 
-def test_gmail_rejects_mismatched_history_thread(monkeypatch):
+def test_gmail_rejects_mismatched_history_thread(monkeypatch: pytest.MonkeyPatch) -> None:
     monkeypatch.setenv("MCFLY_ENABLE_THREAD_HISTORY", "true")
     payloads = {
         "m0": make_payload("m0", "thread-b", 1000, SENDER, "Wrong thread"),
@@ -73,7 +89,7 @@ def test_gmail_rejects_mismatched_history_thread(monkeypatch):
         GmailAdapter(lambda: service, MAILBOX).message("m1")
 
 
-def test_gmail_history_disabled_by_default(monkeypatch):
+def test_gmail_history_disabled_by_default(monkeypatch: pytest.MonkeyPatch) -> None:
     monkeypatch.delenv("MCFLY_ENABLE_THREAD_HISTORY", raising=False)
     payloads = {"m1": make_payload("m1", "thread-a", 2000, SENDER, "Follow up")}
     service = fake_service(payloads, ["m1"])

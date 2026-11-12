@@ -1,5 +1,6 @@
 from collections.abc import Iterator
 from dataclasses import dataclass
+from datetime import datetime
 from typing import Protocol
 from uuid import UUID
 
@@ -41,6 +42,7 @@ class AttachmentEnricher(Protocol):
 
 
 class EmailRepository(Protocol):
+    def initialize(self, mailbox_id: str, history_id: str, expiration: datetime | None) -> None: ...
     def acquire_sync(self, mailbox_id: str, token: UUID) -> str: ...
     def release_sync(self, mailbox_id: str, token: UUID) -> None: ...
     def checkpoint(self, mailbox_id: str, token: UUID, history_id: str) -> None: ...

@@ -20,6 +20,7 @@ class Settings(BaseSettings):
     pubsub_service_account: str = ""
     tasks_service_account: str = ""
     gmail_topic: str = "projects/reply-mcfly-poc/topics/gmail-events"
+    enable_rag: bool = False
 
     def sqlalchemy_url(self) -> str:
         if self.database_url is None:

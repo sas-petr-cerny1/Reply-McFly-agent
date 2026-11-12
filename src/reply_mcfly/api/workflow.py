@@ -16,6 +16,7 @@ from reply_mcfly.adapters.cloud_tasks_adapter import CloudTasksAdapter
 from reply_mcfly.adapters.gemini_adapter import GeminiAdapter
 from reply_mcfly.adapters.gmail_adapter import GmailAdapter
 from reply_mcfly.adapters.google_clients import GmailServiceFactory
+from reply_mcfly.adapters.markdown_rag_adapter import MarkdownRAGProvider
 from reply_mcfly.adapters.oidc_adapter import GoogleOidcVerifier
 from reply_mcfly.adapters.postgres_adapter import PostgresEmailRepository
 from reply_mcfly.application.attachment_service import AttachmentService
@@ -91,6 +92,7 @@ def build_services(
     gemini = GeminiAdapter(
         settings.gcp_project_id, settings.vertex_ai_location, settings.gemini_model
     )
+    rag = MarkdownRAGProvider() if settings.enable_rag else None
     verifier = GoogleOidcVerifier(settings.worker_url.rstrip("/"), settings.tasks_service_account)
     return WorkerServices(
         mailbox,
@@ -102,6 +104,8 @@ def build_services(
             mailbox,
             ReplyService(allowed, FallbackTemplates(), LiteralReplyValidator()),
             AttachmentService(gemini),
+            rag=rag,
+            enable_rag=settings.enable_rag,
         ),
         verifier,
     )

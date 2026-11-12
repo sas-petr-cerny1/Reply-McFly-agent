@@ -7,11 +7,19 @@ from google.genai import errors, types
 
 from reply_mcfly.adapters.gemini_adapter import (
     AttachmentExtractionResult,
+    ExtractedPassage,
     GeminiAdapter,
     _draft_from_response,
+    _usage_counts,
 )
 from reply_mcfly.application.attachment_processor import ValidatedAttachment
-from reply_mcfly.domain.email import IncomingEmail, MessageMetadata, ReplyDraft, WorkflowError
+from reply_mcfly.domain.email import (
+    IncomingEmail,
+    MessageMetadata,
+    RagPassage,
+    ReplyDraft,
+    WorkflowError,
+)
 
 
 def email() -> IncomingEmail:
@@ -117,6 +125,8 @@ def test_uses_sdk_parsed_reply_draft_without_revalidation() -> None:
     ("text", "code"),
     [
         (None, "AI_OUTPUT_EMPTY"),
+        ("", "AI_OUTPUT_EMPTY"),
+        (" \n", "AI_OUTPUT_EMPTY"),
         ("not json", "AI_OUTPUT_INVALID_JSON"),
         ('{"response_type":"GENERATED"}', "AI_OUTPUT_SCHEMA_INVALID"),
     ],
@@ -188,12 +198,10 @@ def test_attachment_extract_includes_email_context() -> None:
             candidates=[types.Candidate(finish_reason=types.FinishReason.STOP)],
             parsed=AttachmentExtractionResult(
                 passages=[
-                    {
-                        "source_id": "attachment:0",
-                        "extracted_text": (
-                            "DEMO-65432\nPravý roh displeje je roztržený."
-                        ),
-                    }
+                    ExtractedPassage(
+                        source_id="attachment:0",
+                        extracted_text="DEMO-65432\nPravý roh displeje je roztržený.",
+                    )
                 ]
             ),
         )
@@ -203,6 +211,31 @@ def test_attachment_extract_includes_email_context() -> None:
         assert passages[0].text == "DEMO-65432\nPravý roh displeje je roztržený."
         parts = client.models.generate_content.call_args.kwargs["contents"][0].parts
         assert "Jaké je číslo objednávky" in parts[0].text
+
+
+def test_gemini_payload_includes_rag_passages() -> None:
+    rag_id = "rag:KB01_DemoBoxPlus:abc123"
+    current = IncomingEmail(
+        MessageMetadata("a1", "b1", datetime.now(UTC), frozenset({"INBOX", "UNREAD"})),
+        "sender@customer.invalid",
+        "Synthetic",
+        "<a1@customer.invalid>",
+        "",
+        "Synthetic text",
+        rag_passages=(RagPassage(rag_id, "KB text", "KB01_DemoBoxPlus.md"),),
+    )
+    with patch("reply_mcfly.adapters.gemini_adapter.genai.Client") as factory:
+        client = factory.return_value.__enter__.return_value
+        client.models.generate_content.return_value = gemini_response(text=valid_draft_json())
+        GeminiAdapter("synthetic-project", "eu", "synthetic-model").run(current, 10)
+        payload = json.loads(client.models.generate_content.call_args.kwargs["contents"])
+        assert payload["rag_passages"] == [
+            {
+                "source_id": rag_id,
+                "provenance": "KB01_DemoBoxPlus.md",
+                "reference_text": "KB text",
+            }
+        ]
 
 
 @pytest.mark.parametrize("status,retryable", [(400, False), (429, True), (503, True)])
@@ -215,3 +248,24 @@ def test_gemini_api_failure_classification(status: int, retryable: bool) -> None
         with pytest.raises(WorkflowError, match="GEMINI_API_ERROR") as error:
             GeminiAdapter("synthetic-project", "eu", "synthetic-model").run(email(), 10)
         assert error.value.retryable is retryable
+
+
+@pytest.mark.parametrize(
+    ("usage", "expected"),
+    [
+        (
+            None,
+            {"prompt_token_count": None, "candidates_token_count": None, "total_token_count": None},
+        ),
+        (
+            types.GenerateContentResponseUsageMetadata(
+                prompt_token_count=0, candidates_token_count=12, total_token_count=12
+            ),
+            {"prompt_token_count": 0, "candidates_token_count": 12, "total_token_count": 12},
+        ),
+    ],
+)
+def test_usage_counts_preserves_missing_and_reported_values(
+    usage: types.GenerateContentResponseUsageMetadata | None, expected: dict[str, int | None]
+) -> None:
+    assert _usage_counts(types.GenerateContentResponse(usage_metadata=usage)) == expected

@@ -79,7 +79,9 @@ class LiveEmailRunner:
         )
 
 
-def validate_live_email_settings(mailbox_id: str, allowed_senders: frozenset[str]) -> frozenset[str]:
+def validate_live_email_settings(
+    mailbox_id: str, allowed_senders: frozenset[str]
+) -> frozenset[str]:
     if not mailbox_id or "@" not in mailbox_id:
         raise RuntimeError("Set MCFLY_MAILBOX_ID to the dedicated Gmail mailbox address")
     if not allowed_senders:

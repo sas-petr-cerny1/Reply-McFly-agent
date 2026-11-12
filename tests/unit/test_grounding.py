@@ -93,7 +93,9 @@ def test_nonexistent_source_and_fabricated_quote_are_rejected(email: IncomingEma
         LiteralReplyValidator().validate(email, draft)
 
 
-def test_paraphrase_in_proposed_reply_does_not_block_evidence_validation(email: IncomingEmail) -> None:
+def test_paraphrase_in_proposed_reply_does_not_block_evidence_validation(
+    email: IncomingEmail,
+) -> None:
     draft = verified_draft(email)
     draft.proposed_reply = "Potvrzujeme, že Vaše objednávka 123 je vyřízena."
     LiteralReplyValidator().validate(email, draft)

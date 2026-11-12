@@ -16,7 +16,6 @@ from pydantic import BaseModel, SecretStr
 
 from reply_mcfly.domain.email import WorkflowError
 
-
 GMAIL_SCOPES = (
     "https://www.googleapis.com/auth/gmail.readonly",
     "https://www.googleapis.com/auth/gmail.send",
@@ -119,7 +118,9 @@ class GmailOAuthFileFactory:
     def __call__(self) -> Any:
         try:
             path = assert_private_credentials_file(self.credentials_path)
-            from_file: Callable[[str, list[str]], Credentials] = Credentials.from_authorized_user_file
+            from_file: Callable[[str, list[str]], Credentials] = (
+                Credentials.from_authorized_user_file
+            )
             credentials = from_file(str(path), list(GMAIL_SCOPES))
             if credentials is None:
                 raise WorkflowError("GMAIL_CREDENTIALS_UNAVAILABLE", retryable=False, status=400)

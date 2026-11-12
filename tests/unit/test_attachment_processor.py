@@ -1,23 +1,29 @@
 import io
 import wave
+from collections.abc import Callable
 from datetime import UTC, datetime
+from unittest.mock import create_autospec
 from uuid import uuid4
 
 import pytest
 
-from reply_mcfly.application.attachment_processor import validate_attachments
+from reply_mcfly.application.attachment_processor import ValidatedAttachment, validate_attachments
 from reply_mcfly.application.attachment_service import AttachmentService
 from reply_mcfly.application.email_processing_service import EmailProcessingService
+from reply_mcfly.application.reply_service import FallbackTemplates, ReplyService
 from reply_mcfly.domain.email import (
     AttachmentPassage,
     EmailAttachment,
     IncomingEmail,
     Job,
     MessageMetadata,
+    OutboxEntry,
     ReplyDraft,
     Status,
     WorkflowError,
 )
+from reply_mcfly.domain.grounding import LiteralReplyValidator
+from reply_mcfly.ports.email import EmailRepository, GmailPort
 
 
 def minimal_pdf() -> bytes:
@@ -60,7 +66,7 @@ def attachment(source_id: str, mime: str, data: bytes) -> EmailAttachment:
         ("audio/mpeg", minimal_mp3),
     ],
 )
-def test_supported_formats_pass_magic_validation(mime: str, payload) -> None:
+def test_supported_formats_pass_magic_validation(mime: str, payload: Callable[[], bytes]) -> None:
     validated = validate_attachments((attachment("attachment:0", mime, payload()),))
     assert validated[0].mime_type == mime.replace("audio/x-wav", "audio/wav")
 
@@ -82,7 +88,9 @@ def test_oversized_attachment_is_rejected() -> None:
 
 
 class FakeAttachmentExtractor:
-    def extract(self, email, attachments, timeout: float) -> tuple[AttachmentPassage, ...]:
+    def extract(
+        self, email: IncomingEmail, attachments: tuple[ValidatedAttachment, ...], timeout: float
+    ) -> tuple[AttachmentPassage, ...]:
         return tuple(
             AttachmentPassage(item.source_id, f"extracted-from-{item.source_id}")
             for item in attachments
@@ -106,82 +114,6 @@ class FakeRunner:
         )
 
 
-class FakeRepository:
-    def __init__(self) -> None:
-        self.job = Job(
-            uuid4(),
-            "reply@agent.invalid",
-            "a1",
-            "b1",
-            datetime.now(UTC),
-            Status.PROCESSING,
-            uuid4(),
-            None,
-            1,
-        )
-
-    def get(self, job_id):
-        return self.job
-
-    def claim(self, job_id, token):
-        return self.job
-
-    def outbox(self, job_id):
-        return None
-
-    def transition(self, job, target, code=None):
-        self.job = Job(
-            job.id,
-            job.mailbox_id,
-            job.gmail_message_id,
-            job.gmail_thread_id,
-            job.received_at,
-            target,
-            job.lease_token,
-            job.lease_until,
-            job.attempt_count,
-        )
-
-    def prepare(self, job, entry):
-        pass
-
-    def release_lease(self, job):
-        pass
-
-    def sent(self, job, gmail_message_id):
-        pass
-
-
-class FakeGmail:
-    def __init__(self, email: IncomingEmail) -> None:
-        self.email = email
-
-    def message(self, message_id: str) -> IncomingEmail:
-        return self.email
-
-
-class FakeReplies:
-    def validate_recipient(self, job, email):
-        pass
-
-    def draft(self, job, email, draft):
-        from reply_mcfly.domain.email import OutboxEntry, ResponseType
-
-        return OutboxEntry(
-            job.id,
-            "<out@agent.invalid>",
-            email.sender,
-            email.subject,
-            "body",
-            email.message_id_header,
-            email.references,
-            ResponseType.GENERATED,
-        )
-
-    def validate_stored(self, job, email, entry):
-        pass
-
-
 def test_email_processing_enriches_supported_attachments_before_runner() -> None:
     passage_text = "DEMO-84721 je identifikátor objednávky."
     email = IncomingEmail(
@@ -197,19 +129,46 @@ def test_email_processing_enriches_supported_attachments_before_runner() -> None
     )
 
     class Extractor:
-        def extract(self, current, attachments, timeout):
+        def extract(
+            self,
+            current: IncomingEmail,
+            attachments: tuple[ValidatedAttachment, ...],
+            timeout: float,
+        ) -> tuple[AttachmentPassage, ...]:
             assert attachments
             return (AttachmentPassage("attachment:0", passage_text),)
 
-    repository = FakeRepository()
+    job = Job(
+        uuid4(),
+        "reply@agent.invalid",
+        "a1",
+        "b1",
+        email.metadata.received_at,
+        Status.PROCESSING,
+        uuid4(),
+        None,
+        1,
+    )
+    repository = create_autospec(EmailRepository, instance=True, spec_set=True)
+    repository.get.return_value = job
+    repository.claim.return_value = job
+    repository.outbox.return_value = None
+    gmail = create_autospec(GmailPort, instance=True, spec_set=True)
+    gmail.message.return_value = email
     runner = FakeRunner()
     service = EmailProcessingService(
-        repository,  # type: ignore[arg-type]
-        FakeGmail(email),  # type: ignore[arg-type]
-        runner,  # type: ignore[arg-type]
-        repository.job.mailbox_id,
-        FakeReplies(),  # type: ignore[arg-type]
-        AttachmentService(Extractor()),  # type: ignore[arg-type]
+        repository,
+        gmail,
+        runner,
+        job.mailbox_id,
+        ReplyService(frozenset({email.sender}), FallbackTemplates(), LiteralReplyValidator()),
+        AttachmentService(Extractor()),
     )
-    status = service.process(repository.job.id, send_enabled=False)
+    status = service.process(job.id, send_enabled=False)
     assert status == Status.READY_TO_SEND
+
+    repository.prepare.assert_called_once()
+    entry = repository.prepare.call_args.args[1]
+    assert isinstance(entry, OutboxEntry)
+    assert passage_text in entry.draft_body
+    gmail.send.assert_not_called()
