@@ -375,7 +375,8 @@ def http_services(harness: Harness) -> WorkerServices:
     )
 
 
-def test_http_pipeline_and_duplicate_notification(harness: Harness) -> None:
+@pytest.mark.parametrize("history_id", ["200", 200], ids=["string-id", "numeric-id"])
+def test_http_pipeline_and_duplicate_notification(harness: Harness, history_id: str | int) -> None:
     services = http_services(harness)
     ingress_services = IngressServices(harness.mailbox, harness.queue, SyntheticIdentityVerifier())
     diagnostics = DiagnosticsService(PostgresAdapter(harness.engine))
@@ -384,7 +385,7 @@ def test_http_pipeline_and_duplicate_notification(harness: Harness) -> None:
         "message": {
             "messageId": "notification1",
             "data": base64.b64encode(
-                json.dumps({"emailAddress": harness.mailbox, "historyId": "200"}).encode()
+                json.dumps({"emailAddress": harness.mailbox, "historyId": history_id}).encode()
             ).decode(),
         }
     }
@@ -408,6 +409,37 @@ def test_http_pipeline_and_duplicate_notification(harness: Harness) -> None:
             assert response.status_code == 200
             assert response.json() == {"status": "SENT"}
     assert harness.gmail.send_calls == 1
+
+
+@pytest.mark.parametrize(
+    "history_id",
+    [True, False, 0, -1, 200.0, 200.5, None, "", "private-input-invalid-id", "1" * 33, 10**32],
+)
+def test_ingress_rejects_invalid_history_id_without_dispatch(
+    harness: Harness, history_id: object
+) -> None:
+    diagnostics = DiagnosticsService(PostgresAdapter(harness.engine))
+    services = IngressServices(harness.mailbox, harness.queue, SyntheticIdentityVerifier())
+    notification = {
+        "message": {
+            "messageId": "notification-invalid-history",
+            "data": base64.b64encode(
+                json.dumps({"emailAddress": harness.mailbox, "historyId": history_id}).encode()
+            ).decode(),
+        }
+    }
+    with TestClient(create_app("ingress", diagnostics, services)) as ingress:
+        response = ingress.post(
+            "/events/gmail",
+            headers={"Authorization": "Bearer synthetic-test-identity"},
+            json=notification,
+        )
+    assert response.status_code == 400
+    assert response.json()["error"]["code"] == "INVALID_REQUEST"
+    assert "private-input" not in response.text
+    assert harness.queue.events == []
+    assert harness.queue.jobs == []
+    assert harness.gmail.send_calls == 0
 
 
 def test_http_auth_and_mailbox_validation(harness: Harness) -> None:

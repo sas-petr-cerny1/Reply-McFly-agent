@@ -84,6 +84,8 @@ Změna hesla v `.env` nemění heslo již inicializované databáze.
 ## Textový workflow a bezpečnostní hranice
 
 - Ingress přijme OIDC ověřenou Pub/Sub notifikaci, validuje schránku a zajistí Sync Task.
+  `historyId` přijímá jako desetinný řetězec nebo kladné JSON celé číslo; číslo převede
+  na řetězec se stávajícím limitem 32 znaků. Boolean a desetinná čísla odmítá.
 - Sync čte Gmail History od uloženého checkpointu; nové příchozí nepřečtené zprávy eviduje
   v `email_jobs`. Checkpoint se posune až po zajištění Process Tasks.
 - Worker atomicky rezervuje job s UUID lease tokenem; zastaralý proces nesmí přepsat jeho stav.

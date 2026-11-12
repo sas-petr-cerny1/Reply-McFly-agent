@@ -7,7 +7,7 @@ from uuid import UUID, uuid4
 
 from fastapi import FastAPI, Request, Response
 from fastapi.responses import JSONResponse
-from pydantic import BaseModel, ConfigDict, Field, ValidationError
+from pydantic import BaseModel, ConfigDict, Field, ValidationError, field_validator
 from sqlalchemy.engine import Engine
 from sqlalchemy.exc import SQLAlchemyError
 from starlette.concurrency import run_in_threadpool
@@ -123,6 +123,13 @@ class PushEnvelope(BaseModel):
 class GmailNotification(BaseModel):
     emailAddress: str = Field(min_length=3, max_length=320)
     historyId: str = Field(pattern=r"^\d+$", max_length=32)
+
+    @field_validator("historyId", mode="before")
+    @classmethod
+    def normalize_history_id(cls, value: object) -> object:
+        if isinstance(value, int) and not isinstance(value, bool) and value > 0:
+            return str(value)
+        return value
 
 
 class SyncTask(BaseModel):
