@@ -26,7 +26,11 @@ class GmailSyncService:
                         self.queue.process(job_id)
                         count += 1
                 checkpoint = page.history_id
-            # Queue failure leaves the old checkpoint, so redelivery discovers the jobs again.
+                if page.resume_history_id is not None:
+                    # Persist progress so a later timeout does not replay enqueued pages.
+                    self.repository.checkpoint(mailbox_id, token, page.resume_history_id)
+            # Queue failure leaves the last saved checkpoint, so redelivery discovers the
+            # remaining jobs again.
             self.repository.checkpoint(mailbox_id, token, checkpoint)
             return count
         finally:
