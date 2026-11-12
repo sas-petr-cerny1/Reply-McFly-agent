@@ -210,6 +210,11 @@ def parse_message(payload: GmailMessagePayload) -> IncomingEmail:
     )
 
 
+def _comparable_body(text: str) -> str:
+    # SMTP serialization turns "\n" into CRLF; compare content, not transport line endings.
+    return text.replace("\r\n", "\n").strip()
+
+
 def encode_reply(job: Job, entry: OutboxEntry) -> str:
     message = EmailMessage()
     message["From"] = job.mailbox_id
@@ -452,8 +457,7 @@ class GmailAdapter:
                     and single_address(message, "To") == entry.recipient.casefold()
                     and str(message.get("In-Reply-To")) == entry.in_reply_to
                     and str(message.get("Subject", "")) == entry.subject
-                    and isinstance(text, str)
-                    and text.strip() == entry.draft_body.strip()
+                    and _comparable_body(text) == _comparable_body(entry.draft_body)
                 ):
                     matches.append(identifier)
             if len(matches) > 1:
