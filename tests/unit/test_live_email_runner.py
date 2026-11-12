@@ -27,6 +27,7 @@ from reply_mcfly.domain.email import (
     WorkflowError,
 )
 from reply_mcfly.domain.grounding import LiteralReplyValidator, render_verified_reply
+from reply_mcfly.domain.sender_policy import parse_sender_policy
 from reply_mcfly.ports.email import HistoryPage
 
 pytestmark = pytest.mark.integration
@@ -106,7 +107,7 @@ def runner_harness() -> Iterator[tuple[LiveEmailRunner, FakeGmail, FakeRunner, E
     )
     runner = FakeRunner()
     replies = ReplyService(
-        frozenset({gmail.email.sender}),
+        parse_sender_policy(frozenset({gmail.email.sender}), mailbox),
         FallbackTemplates(),
         LiteralReplyValidator(),
     )

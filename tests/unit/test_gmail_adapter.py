@@ -84,6 +84,15 @@ def test_supported_attachment_bytes_are_decoded() -> None:
     assert incoming.attachments[0].data.startswith(b"%PDF-")
 
 
+def test_x_auto_response_suppress_marks_message_automatic() -> None:
+    message = EmailMessage()
+    message["From"] = "sender@customer.invalid"
+    message["X-Auto-Response-Suppress"] = "All"
+    message.set_content("Body")
+    incoming = parse_message(raw_payload(message))
+    assert incoming.automatic
+
+
 def test_automatic_sender_and_unsupported_attachment_are_identified() -> None:
     message = EmailMessage()
     message["From"] = "sender@customer.invalid"

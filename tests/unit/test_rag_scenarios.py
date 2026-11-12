@@ -22,6 +22,7 @@ from reply_mcfly.domain.email import (
     WorkflowError,
 )
 from reply_mcfly.domain.grounding import LiteralReplyValidator, render_verified_reply
+from reply_mcfly.domain.sender_policy import parse_sender_policy
 from reply_mcfly.domain.reply_templates import FALLBACK_MISSING_INFORMATION
 
 _PROVIDER = MarkdownRAGProvider()
@@ -298,6 +299,8 @@ def test_missing_kb_information_uses_safe_fallback_template() -> None:
         requires_review=False,
     )
     entry = ReplyService(
-        frozenset({email.sender}), FallbackTemplates(), LiteralReplyValidator()
+        parse_sender_policy(frozenset({email.sender}), job.mailbox_id),
+        FallbackTemplates(),
+        LiteralReplyValidator(),
     ).draft(job, email, draft)
     assert entry.draft_body == FALLBACK_MISSING_INFORMATION

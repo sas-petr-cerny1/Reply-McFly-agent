@@ -14,6 +14,7 @@ from reply_mcfly.domain.email import (
     WorkflowError,
 )
 from reply_mcfly.domain.grounding import LiteralReplyValidator, render_verified_reply
+from reply_mcfly.domain.sender_policy import parse_sender_policy
 from reply_mcfly.domain.reply_templates import (
     FALLBACK_MISSING_INFORMATION,
     FALLBACK_UNSUPPORTED_ATTACHMENT,
@@ -116,7 +117,7 @@ def test_reply_service_ignores_model_proposed_reply_body(email: IncomingEmail) -
     draft = verified_draft(email)
     draft.proposed_reply = "Model-only text that must not be sent."
     service = ReplyService(
-        frozenset({email.sender}),
+        parse_sender_policy(frozenset({email.sender}), "reply@agent.invalid"),
         FallbackTemplates(),
         LiteralReplyValidator(),
     )

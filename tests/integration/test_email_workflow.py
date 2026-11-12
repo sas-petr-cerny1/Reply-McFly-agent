@@ -52,6 +52,7 @@ from reply_mcfly.domain.email import (
     WorkflowError,
 )
 from reply_mcfly.domain.grounding import LiteralReplyValidator, render_verified_reply
+from reply_mcfly.domain.sender_policy import parse_sender_policy
 from reply_mcfly.domain.reply_templates import FALLBACK_MISSING_INFORMATION
 from reply_mcfly.ports.email import HistoryPage
 
@@ -140,7 +141,7 @@ class Harness:
         self.queue = FakeQueue()
         self.runner = FakeRunner()
         self.replies = ReplyService(
-            frozenset({self.gmail.email.sender}),
+            parse_sender_policy(frozenset({self.gmail.email.sender}), self.mailbox),
             FallbackTemplates(),
             LiteralReplyValidator(),
         )
@@ -974,3 +975,41 @@ def test_worker_construction_respects_capability_flags(
         provider.reset_mock()
         assert isinstance(build_services(settings, None, "ingress"), IngressServices)
         provider.assert_not_called()
+
+
+def test_wildcard_sender_policy_accepts_unlisted_external_sender(harness: Harness) -> None:
+    harness.replies = ReplyService(
+        parse_sender_policy(frozenset({"*"}), harness.mailbox),
+        FallbackTemplates(),
+        LiteralReplyValidator(),
+    )
+    harness.processing = EmailProcessingService(
+        harness.repository,
+        harness.gmail,
+        harness.runner,
+        harness.mailbox,
+        harness.replies,
+    )
+    harness.gmail.email = replace(
+        harness.gmail.email, sender="external-unlisted@customer.invalid"
+    )
+    job_id = harness.enqueue()
+    assert harness.processing.process(job_id) == Status.SENT
+    assert harness.runner.calls == 1
+
+
+def test_worker_builds_with_wildcard_sender_configuration(harness: Harness) -> None:
+    settings = Settings(
+        mailbox_id=harness.mailbox,
+        allowed_senders=frozenset({"*"}),
+        gmail_oauth_secret_version="projects/synthetic/secrets/oauth/versions/1",
+        sync_queue="synthetic-sync",
+        process_queue="synthetic-process",
+        worker_url="https://worker.invalid",
+        tasks_service_account="tasks@synthetic.invalid",
+        ingress_audience="https://ingress.invalid",
+        pubsub_service_account="push@synthetic.invalid",
+    )
+    services = build_services(settings, harness.engine, "worker")
+    assert isinstance(services, WorkerServices)
+    assert services.processing.replies.sender_policy.allow_all

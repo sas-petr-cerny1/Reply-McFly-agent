@@ -26,6 +26,7 @@ from reply_mcfly.application.reply_service import FallbackTemplates, ReplyServic
 from reply_mcfly.config.settings import Settings
 from reply_mcfly.domain.email import Status, WorkflowError, require_mailbox
 from reply_mcfly.domain.grounding import LiteralReplyValidator
+from reply_mcfly.domain.sender_policy import SenderConfigurationError, parse_sender_policy
 from reply_mcfly.ports.email import TaskQueuePort
 
 
@@ -84,9 +85,10 @@ def build_services(
         (settings.allowed_senders, settings.gmail_oauth_secret_version, settings.process_queue)
     ):
         raise WorkflowError("WORKFLOW_NOT_CONFIGURED", status=503)
-    allowed = frozenset(address.casefold() for address in settings.allowed_senders)
-    if mailbox in allowed or "@" not in mailbox or any("@" not in address for address in allowed):
-        raise WorkflowError("INVALID_RECIPIENT_CONFIGURATION", status=503)
+    try:
+        sender_policy = parse_sender_policy(settings.allowed_senders, settings.mailbox_id)
+    except SenderConfigurationError:
+        raise WorkflowError("INVALID_RECIPIENT_CONFIGURATION", status=503) from None
     gmail = GmailAdapter(GmailServiceFactory(settings.gmail_oauth_secret_version), mailbox)
     repository = PostgresEmailRepository(engine)
     gemini = GeminiAdapter(
@@ -102,7 +104,7 @@ def build_services(
             gmail,
             gemini,
             mailbox,
-            ReplyService(allowed, FallbackTemplates(), LiteralReplyValidator()),
+            ReplyService(sender_policy, FallbackTemplates(), LiteralReplyValidator()),
             AttachmentService(gemini),
             rag=rag,
             enable_rag=settings.enable_rag,

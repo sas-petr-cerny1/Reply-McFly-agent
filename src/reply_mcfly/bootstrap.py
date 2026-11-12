@@ -4,6 +4,7 @@ from reply_mcfly.adapters.gmail_adapter import GmailAdapter
 from reply_mcfly.adapters.google_clients import GmailServiceFactory
 from reply_mcfly.adapters.postgres_adapter import PostgresEmailRepository, make_engine
 from reply_mcfly.config.settings import Settings
+from reply_mcfly.domain.sender_policy import SenderConfigurationError, parse_sender_policy
 
 
 def main() -> None:
@@ -21,6 +22,10 @@ def main() -> None:
         raise RuntimeError(
             "Configure OAuth, dedicated mailbox, sender allowlist and notification endpoints first"
         )
+    try:
+        parse_sender_policy(settings.allowed_senders, settings.mailbox_id)
+    except SenderConfigurationError as error:
+        raise RuntimeError("Invalid MCFLY_ALLOWED_SENDERS configuration for bootstrap") from error
     gmail = GmailAdapter(
         GmailServiceFactory(settings.gmail_oauth_secret_version), settings.mailbox_id
     )

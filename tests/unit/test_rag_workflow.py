@@ -16,6 +16,7 @@ from reply_mcfly.domain.email import (
     Status,
 )
 from reply_mcfly.domain.grounding import LiteralReplyValidator, render_verified_reply
+from reply_mcfly.domain.sender_policy import parse_sender_policy
 from reply_mcfly.ports.email import EmailRepository, GmailPort
 
 
@@ -65,7 +66,11 @@ def test_processing_attaches_rag_before_runner() -> None:
     gmail = create_autospec(GmailPort, instance=True, spec_set=True)
     gmail.message.return_value = email
     runner = CapturingRunner()
-    replies = ReplyService(frozenset({email.sender}), FallbackTemplates(), LiteralReplyValidator())
+    replies = ReplyService(
+        parse_sender_policy(frozenset({email.sender}), job.mailbox_id),
+        FallbackTemplates(),
+        LiteralReplyValidator(),
+    )
     service = EmailProcessingService(
         repo,
         gmail,

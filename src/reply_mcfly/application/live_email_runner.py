@@ -7,6 +7,7 @@ from uuid import UUID
 from reply_mcfly.application.email_processing_service import EmailProcessingService
 from reply_mcfly.application.telemetry import emit
 from reply_mcfly.domain.email import Status, WorkflowError, incoming
+from reply_mcfly.domain.sender_policy import SenderConfigurationError, SenderPolicy, parse_sender_policy
 from reply_mcfly.ports.email import EmailRepository, GmailPort
 
 
@@ -81,13 +82,12 @@ class LiveEmailRunner:
 
 def validate_live_email_settings(
     mailbox_id: str, allowed_senders: frozenset[str]
-) -> frozenset[str]:
+) -> SenderPolicy:
     if not mailbox_id or "@" not in mailbox_id:
         raise RuntimeError("Set MCFLY_MAILBOX_ID to the dedicated Gmail mailbox address")
     if not allowed_senders:
         raise RuntimeError("Set MCFLY_ALLOWED_SENDERS to an explicit sender allowlist")
-    mailbox = mailbox_id.casefold()
-    allowed = frozenset(address.casefold() for address in allowed_senders)
-    if mailbox in allowed or any("@" not in address for address in allowed):
-        raise RuntimeError("Invalid MCFLY_ALLOWED_SENDERS configuration for live email runs")
-    return allowed
+    try:
+        return parse_sender_policy(allowed_senders, mailbox_id)
+    except SenderConfigurationError as error:
+        raise RuntimeError("Invalid MCFLY_ALLOWED_SENDERS configuration for live email runs") from error

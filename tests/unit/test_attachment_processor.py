@@ -23,6 +23,7 @@ from reply_mcfly.domain.email import (
     WorkflowError,
 )
 from reply_mcfly.domain.grounding import LiteralReplyValidator
+from reply_mcfly.domain.sender_policy import parse_sender_policy
 from reply_mcfly.ports.email import EmailRepository, GmailPort
 
 
@@ -161,7 +162,11 @@ def test_email_processing_enriches_supported_attachments_before_runner() -> None
         gmail,
         runner,
         job.mailbox_id,
-        ReplyService(frozenset({email.sender}), FallbackTemplates(), LiteralReplyValidator()),
+        ReplyService(
+            parse_sender_policy(frozenset({email.sender}), job.mailbox_id),
+            FallbackTemplates(),
+            LiteralReplyValidator(),
+        ),
         AttachmentService(Extractor()),
     )
     status = service.process(job.id, send_enabled=False)

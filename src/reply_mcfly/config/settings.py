@@ -1,5 +1,12 @@
-from pydantic import Field, PostgresDsn, SecretStr
+from pydantic import Field, PostgresDsn, SecretStr, field_validator
 from pydantic_settings import BaseSettings, SettingsConfigDict
+
+from reply_mcfly.domain.sender_policy import (
+    WILDCARD_SENDER,
+    SenderConfigurationError,
+    SenderPolicy,
+    parse_sender_policy,
+)
 
 
 class Settings(BaseSettings):
@@ -12,6 +19,30 @@ class Settings(BaseSettings):
     gemini_model: str = Field(default="gemini-3.5-flash", validation_alias="GEMINI_MODEL")
     mailbox_id: str = ""
     allowed_senders: frozenset[str] = frozenset()
+
+    @field_validator("allowed_senders")
+    @classmethod
+    def validate_allowed_senders(cls, value: frozenset[str]) -> frozenset[str]:
+        if not value:
+            return value
+        if WILDCARD_SENDER in value:
+            if value != frozenset({WILDCARD_SENDER}):
+                raise ValueError(
+                    "MCFLY_ALLOWED_SENDERS allow-all mode requires exactly [\"*\"]"
+                )
+            return value
+        for address in value:
+            if not address.strip() or "@" not in address:
+                raise ValueError(
+                    "MCFLY_ALLOWED_SENDERS must contain valid email addresses or [\"*\"]"
+                )
+        return frozenset(address.casefold() for address in value)
+
+    def sender_policy(self) -> SenderPolicy:
+        try:
+            return parse_sender_policy(self.allowed_senders, self.mailbox_id)
+        except SenderConfigurationError as error:
+            raise ValueError(str(error)) from error
     gmail_oauth_secret_version: str = ""
     sync_queue: str = ""
     process_queue: str = ""

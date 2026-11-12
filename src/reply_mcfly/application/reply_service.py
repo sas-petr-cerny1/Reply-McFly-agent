@@ -18,6 +18,7 @@ from reply_mcfly.domain.reply_templates import (
     FALLBACK_MISSING_INFORMATION,
     FALLBACK_UNSUPPORTED_ATTACHMENT,
 )
+from reply_mcfly.domain.sender_policy import SenderPolicy
 
 
 class GeneratedReplyValidator(Protocol):
@@ -43,15 +44,15 @@ class FallbackTemplates:
 class ReplyService:
     def __init__(
         self,
-        recipients: frozenset[str],
+        sender_policy: SenderPolicy,
         templates: FallbackTemplates,
         generated_validator: GeneratedReplyValidator,
     ) -> None:
-        self.recipients, self.templates = recipients, templates
+        self.sender_policy, self.templates = sender_policy, templates
         self.generated_validator = generated_validator
 
     def validate_recipient(self, job: Job, email: IncomingEmail) -> None:
-        validate_recipient(job, email, self.recipients)
+        validate_recipient(job, email, self.sender_policy)
 
     def draft(self, job: Job, email: IncomingEmail, draft: ReplyDraft) -> OutboxEntry:
         self.validate_recipient(job, email)
@@ -71,7 +72,7 @@ class ReplyService:
             job,
             email,
             render_verified_reply(draft.evidence),
-            self.recipients,
+            self.sender_policy,
             evidence=tuple((e.source_id, e.exact_quote) for e in draft.evidence),
         )
 
@@ -81,7 +82,7 @@ class ReplyService:
             job,
             email,
             body,
-            self.recipients,
+            self.sender_policy,
             ResponseType.FALLBACK,
             reason,
         )
@@ -107,7 +108,7 @@ class ReplyService:
             job,
             email,
             entry.draft_body,
-            self.recipients,
+            self.sender_policy,
             entry.response_type,
             entry.fallback_reason,
             entry.evidence,

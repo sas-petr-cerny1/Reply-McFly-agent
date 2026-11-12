@@ -155,12 +155,14 @@ def parse_message(payload: GmailMessagePayload) -> IncomingEmail:
         parser = _ReadableHTML()
         parser.feed(content)
         content = "".join(parser.text)
+    suppress = str(message.get("X-Auto-Response-Suppress", "")).casefold()
     automatic = (
         str(message.get("Auto-Submitted", "no")).casefold() != "no"
         or str(message.get("Precedence", "")).casefold() in {"bulk", "list", "junk"}
         or message.get("List-ID") is not None
         or str(message.get("Return-Path", "")) == "<>"
         or sender.split("@")[0] in {"noreply", "no-reply", "mailer-daemon", "postmaster"}
+        or suppress in {"all", "dr", "autoreply", "oof"}
     )
     attachment_parts = [
         part

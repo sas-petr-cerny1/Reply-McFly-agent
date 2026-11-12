@@ -39,6 +39,7 @@ from reply_mcfly.domain.email import (
     WorkflowError,
 )
 from reply_mcfly.domain.grounding import LiteralReplyValidator, render_verified_reply
+from reply_mcfly.domain.sender_policy import parse_sender_policy
 from reply_mcfly.ports.email import HistoryPage
 
 pytestmark = pytest.mark.integration
@@ -156,7 +157,11 @@ def thread_history_harness() -> Iterator[
     repository.initialize(mailbox, "100", datetime.now(UTC) + timedelta(days=1))
     gmail = ScenarioGmail(mailbox)
     runner = ThreadHistoryFakeRunner()
-    replies = ReplyService(frozenset({SENDER}), FallbackTemplates(), LiteralReplyValidator())
+    replies = ReplyService(
+        parse_sender_policy(frozenset({SENDER}), mailbox),
+        FallbackTemplates(),
+        LiteralReplyValidator(),
+    )
     processing = EmailProcessingService(repository, gmail, runner, mailbox, replies)
     live = LiveEmailRunner(repository, gmail, processing, mailbox)
     try:

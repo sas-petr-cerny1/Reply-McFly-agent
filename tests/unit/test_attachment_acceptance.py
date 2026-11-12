@@ -59,8 +59,12 @@ def test_reply_grounding_requires_attachment_quotes(quote: str, required: tuple[
         None,
         0,
     )
+    from reply_mcfly.domain.sender_policy import parse_sender_policy
+
     entry = ReplyService(
-        frozenset({incoming.sender}), FallbackTemplates(), LiteralReplyValidator()
+        parse_sender_policy(frozenset({incoming.sender}), job.mailbox_id),
+        FallbackTemplates(),
+        LiteralReplyValidator(),
     ).draft(job, incoming, draft)
     for fragment in required:
         assert fragment in entry.draft_body

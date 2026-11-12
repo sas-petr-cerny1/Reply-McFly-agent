@@ -7,6 +7,8 @@ from uuid import UUID
 
 from pydantic import BaseModel, ConfigDict, Field
 
+from reply_mcfly.domain.sender_policy import SenderPolicy
+
 
 class WorkflowError(Exception):
     def __init__(self, code: str, *, retryable: bool = False, status: int = 400) -> None:
@@ -159,7 +161,7 @@ def incoming(metadata: MessageMetadata) -> bool:
     )
 
 
-def validate_recipient(job: Job, email: IncomingEmail, recipients: frozenset[str]) -> None:
+def validate_recipient(job: Job, email: IncomingEmail, policy: SenderPolicy) -> None:
     if (
         email.metadata.message_id != job.gmail_message_id
         or email.metadata.thread_id != job.gmail_thread_id
@@ -168,7 +170,7 @@ def validate_recipient(job: Job, email: IncomingEmail, recipients: frozenset[str
     if (
         email.automatic
         or email.sender.casefold() == job.mailbox_id.casefold()
-        or email.sender.casefold() not in recipients
+        or not policy.permits_sender(email.sender)
     ):
         raise WorkflowError("RECIPIENT_REQUIRES_REVIEW")
     for value in (email.sender, email.subject, email.message_id_header, email.references):
@@ -196,12 +198,12 @@ def prepare_reply(
     job: Job,
     email: IncomingEmail,
     body: str,
-    recipients: frozenset[str],
+    policy: SenderPolicy,
     response_type: ResponseType = ResponseType.GENERATED,
     fallback_reason: FallbackReason | None = None,
     evidence: tuple[tuple[str, str], ...] = (),
 ) -> OutboxEntry:
-    validate_recipient(job, email, recipients)
+    validate_recipient(job, email, policy)
     if (
         not body.strip()
         or len(body) > 10000
