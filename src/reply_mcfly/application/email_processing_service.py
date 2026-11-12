@@ -15,6 +15,7 @@ from reply_mcfly.domain.email import (
     Status,
     WorkflowError,
     require_mailbox,
+    validate_untrusted_content,
 )
 from reply_mcfly.ports.capabilities import RAGProvider
 from reply_mcfly.ports.email import AttachmentEnricher, EmailRepository, GmailPort, WorkflowRunner
@@ -44,6 +45,8 @@ class EmailProcessingService:
         passages = self._rag.retrieve(build_rag_retrieval_query(email))
         if not passages:
             return email
+        for passage in passages:
+            validate_untrusted_content(passage.text)
         return replace(
             email,
             rag_passages=tuple(

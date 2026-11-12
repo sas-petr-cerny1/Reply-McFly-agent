@@ -176,13 +176,17 @@ def validate_recipient(job: Job, email: IncomingEmail, recipients: frozenset[str
             raise WorkflowError("INVALID_REPLY_HEADERS")
     if not re.fullmatch(r"<[^<>\s]+@[^<>\s]+>", email.message_id_header):
         raise WorkflowError("INVALID_MESSAGE_ID")
-    # Additional review triggers. Structural quote-only verification is the primary safeguard.
+    validate_untrusted_content(email.text)
+
+
+def validate_untrusted_content(text: str) -> None:
+    # Additional review triggers, not a general prompt-injection classifier.
     if re.search(
-        r"ignore\s+(?:all\s+|previous\s+|prior\s+)?instructions|"
+        r"ignore\s+(?:(?:all\s+)?(?:previous|prior)\s+|all\s+)?instructions|"
         r"ignoruj.{0,40}(?:instrukce|pravidla)|system\s+prompt|"
         r"(?:api[_ -]?key|access[_ -]?token|refresh[_ -]?token|password|heslo)\s*[:=]|"
         r"-----BEGIN.{0,30}PRIVATE KEY|\bya29\.",
-        email.text,
+        text,
         re.IGNORECASE,
     ):
         raise WorkflowError("UNTRUSTED_CONTENT_REQUIRES_REVIEW")

@@ -2,9 +2,9 @@ from reply_mcfly.domain.email import Evidence, IncomingEmail, ReplyDraft, Workfl
 
 
 def _reply_intro(evidence: list[Evidence]) -> str:
-    if any(item.source_id.startswith("thread:") for item in evidence):
-        return "Dobrý den,\n\nv naší předchozí e-mailové konverzaci zaznělo:\n\n"
     kinds = {item.source_id.split(":", 1)[0] for item in evidence}
+    if kinds == {"thread"}:
+        return "Dobrý den,\n\nv naší předchozí e-mailové konverzaci zaznělo:\n\n"
     has_rag = "rag" in kinds
     if kinds == {"attachment"}:
         return "Dobrý den,\n\nz ověřeného obsahu přílohy plyne:\n\n"

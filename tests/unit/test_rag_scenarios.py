@@ -260,7 +260,7 @@ def test_thread_history_and_rag_sources_stay_separate() -> None:
         ),
     )
     assert render_verified_reply(evidence).startswith(
-        "Dobrý den,\n\nv naší předchozí e-mailové konverzaci zaznělo:"
+        "Dobrý den,\n\nna základě vašeho dotazu a ověřených podkladů:"
     )
 
 
