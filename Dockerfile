@@ -26,6 +26,8 @@ USER app
 CMD ["pytest"]
 
 FROM python-base AS runtime
+# Neither service needs filesystem mounting tools in the runtime image.
+RUN apt-get purge -y mount
 COPY --from=build /app /app
 USER app
 EXPOSE 8080

@@ -221,3 +221,73 @@ Skutečné OAuth, Gmail/GCP E2E, latence 120 s a Cloud Run/AMD64 zůstávají ne
 | Trivy runtime | **FAIL** beze změny (47 HIGH z rekonstrukce); release gate otevřený |
 
 Skutečné Gmail/Vertex volání v `live_email` nebylo součástí Docker pytest; jen fake/mocked testy.
+
+## Aktuální Trivy runtime audit — 12. 11. 2026
+
+**HIGH/CRITICAL gate zůstává FAIL.** Na větvi `feature/rag`, navazující na `80a5ed5`,
+byl porovnán skutečný runtime před a po odstranění nepotřebného balíku `mount`.
+Změna platí jen pro runtime stage; nemění aplikaci, migrace ani testovací stage.
+APT simulace potvrdila odstranění pouze `mount`, bez dalších závislostí.
+Aktuální APT indexy současně nabízely stejné verze dotčených balíků jako image;
+`apt-get -s upgrade` hlásil 0 aktualizací.
+
+Scanner: `aquasec/trivy:0.76.2`, uzamčený digestem
+`sha256:8f6bb947dbc528902e11f2f5be52f7b519f6a39d5d148f41166f2040499768fb`.
+Databáze byla aktualizovaná `2026-11-12T07:01:33Z` a stažená samostatně.
+Oba skeny proběhly offline nad `docker image save` archivem, bez Docker socketu,
+se stejnou DB a parametry `--scanners vuln,secret --severity HIGH,CRITICAL
+--skip-db-update --offline-scan --exit-code 1 --format json`.
+Nebyl použit ignore seznam, VEX výjimka ani `--ignore-unfixed`.
+
+| Image / výsledek | Před změnou | Po změně |
+|---|---|---|
+| Runtime config ID (sha256) | `cdfc9ed931e50290760e79a281c33bb22e6609e3c3210a77e9bbe8a3ccb00f27` | `e7212000a9843af9480089c097a71a04e2a8c7a0fe852096dd76f40519586c85` |
+| Platforma | linux/arm64 | linux/arm64 |
+| HIGH balíkové nálezy | 47 | **43** |
+| CRITICAL | 0 | 0 |
+| Unikátní CVE | 11 | 11 |
+| Python HIGH/CRITICAL / secrets HIGH/CRITICAL | 0 / 0 | 0 / 0 |
+| Exit code | 1 | 1 |
+
+Odstranění `mount` odstranilo čtyři balíkové nálezy a jeho spustitelné soubory,
+neopravilo však stejné CVE hlášené u dalších balíků util-linux.
+Zbývající nálezy jsou v Debianu, nikoli v uzamčených Python závislostech.
+Trivy pro žádný z nich neuvádí opravenou verzi v použité distribuci.
+
+| Skupina (HIGH balíkové nálezy) | Prověřená použitelnost a omezení |
+|---|---|
+| util-linux: CVE-2026-76642, CVE-2026-78408, CVE-2026-78409, CVE-2026-78410 (32) | `mount`/`umount` odstraněny, `nsenter` zůstává. Jde o lokální privilegované mount/cgroup scénáře; aplikace tyto nástroje přímo nevolá. Základní balík util-linux je Essential. |
+| ncurses: CVE-2025-69720 (4) | Zranitelnost nástroje `infocmp`, který v image zůstává; aplikace jej přímo nevolá. ncurses-bin je Essential. |
+| SQLite: CVE-2026-119373, CVE-2026-119374, CVE-2026-119379 (3) | Python sqlite3 a knihovna jsou přítomné. Aplikace používá PostgreSQL a nemá přímé volání SQLite ani vstup pro SQLite databáze/changesety. To není důkaz nepoužitelnosti ve všech závislostech. |
+| systemd: CVE-2026-16742 (2) | `systemd-homed` není v image přítomný; zůstávají knihovny libsystemd0/libudev1 ze stejného zdrojového balíku. Kandidát na další posouzení použitelnosti, nikoli schválená výjimka. |
+| ACL: CVE-2026-54369 (1) | Knihovna zůstává. Aplikace přímo nevolá ACL API ani privilegované operace s ACL; tranzitivní dosažitelnost nebyla plně analyzovaná. |
+| Perl: CVE-2026-9538 (1) | `perl-base` je Essential, ale pokus načíst dotčený `Archive::Tar` v runtime selhal, modul není dostupný. Kandidát na posouzení použitelnosti, nikoli schválená výjimka. |
+
+Stav a podmínky byly porovnány s Debian Security Trackerem:
+[util-linux](https://security-tracker.debian.org/tracker/source-package/util-linux),
+[ncurses](https://security-tracker.debian.org/tracker/CVE-2025-69720),
+[SQLite](https://security-tracker.debian.org/tracker/CVE-2026-119374),
+[systemd](https://security-tracker.debian.org/tracker/CVE-2026-16742),
+[ACL](https://security-tracker.debian.org/tracker/CVE-2026-54369),
+[Perl](https://security-tracker.debian.org/tracker/CVE-2026-9538).
+Non-root UID 10001 a absence přímého použití některých komponent snižují expozici;
+nenahrazují opravu ani schválení release. Balíky z Debian unstable nebyly míchány
+se stable a nebyly vynuceně odstraňované Essential balíky nebo knihovny Pythonu.
+
+Lokální JSON důkazy jsou v ignorovaném `docs/security/`:
+`trivy-runtime-before-2026-11-12.json`, `trivy-runtime-after-2026-11-12.json`
+a `trivy-db-2026-11-12.json`; nejsou součástí klonu repozitáře.
+
+Ověření po změně: `docker build --target runtime -t reply-mcfly:local .` prošel;
+`docker compose run --rm --no-deps tests pytest -q` má **148 passed in 3.31s**.
+`docker compose up -d --wait --no-build ingress worker` má všechny tři služby healthy.
+Na upraveném runtime mají oba health endpointy 200, neautorizované workflow POST 401,
+`alembic check` nemá rozdíl modelů; runtime importy, UID 10001 a všechny tři KB soubory
+byly ověřené bez sítě. Žádný skutečný e-mail nebyl v tomto auditu odeslán.
+
+První nasazení stále blokuje otevřený HIGH/CRITICAL gate: je nutná oprava v podporované
+základně nebo explicitně schválené, podložené posouzení zbývajících nálezů.
+Dále chybí ověřený cílový cloudový build, dostupný cloudový runbook/runtime konfigurace
+s aktivní historií a RAG, ověření IAM/SQL/secrets/Watch a jeho obnovování, živý cloudový
+E2E včetně duplicit/souběhu a měření od přijetí zprávy do odeslání pod 120 sekund.
+Žádná cloudová změna, push ani deployment v tomto auditu neproběhly.
