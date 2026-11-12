@@ -28,7 +28,9 @@ DEFAULT_CREDENTIALS = Path.home() / ".config/reply-mcfly/gmail-token.json"
 
 def main() -> int:
     parser = argparse.ArgumentParser(
-        description="Process one Gmail message locally through Reply McFly (default: dry-run, no send)"
+        description=(
+            "Process one Gmail message locally through Reply McFly (default: dry-run, no send)"
+        )
     )
     parser.add_argument(
         "--message-id",

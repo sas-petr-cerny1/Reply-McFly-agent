@@ -22,11 +22,7 @@ def render_verified_reply(evidence: list[Evidence]) -> str:
         "\n".join("> " + line for line in item.exact_quote.splitlines()) for item in evidence
     )
     intro = _reply_intro(evidence)
-    return (
-        intro
-        + quotes
-        + "\n\nS pozdravem\nReply McFly – AI Email Assistant"
-    )
+    return intro + quotes + "\n\nS pozdravem\nReply McFly – AI Email Assistant"
 
 
 class LiteralReplyValidator:
@@ -49,4 +45,4 @@ class LiteralReplyValidator:
                 or item.exact_quote not in sources[item.source_id]
             ):
                 raise WorkflowError("INVALID_EVIDENCE")
-        # Outbound body is assembled server-side from evidence; proposed_reply is model metadata only.
+        # Outbound body comes from evidence; proposed_reply is model metadata only.

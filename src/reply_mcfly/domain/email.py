@@ -210,11 +210,7 @@ def prepare_reply(
         raise WorkflowError("REPLY_REQUIRES_REVIEW")
     if (response_type == ResponseType.FALLBACK) != (fallback_reason is not None):
         raise WorkflowError("INVALID_RESPONSE_TYPE")
-    if (
-        email.has_attachments
-        and not email.unsupported_attachment
-        and not email.attachment_passages
-    ):
+    if email.has_attachments and not email.unsupported_attachment and not email.attachment_passages:
         raise WorkflowError("ATTACHMENT_REQUIRES_REVIEW")
     return OutboxEntry(
         job_id=job.id,

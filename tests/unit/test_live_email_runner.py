@@ -27,6 +27,7 @@ from reply_mcfly.domain.email import (
     WorkflowError,
 )
 from reply_mcfly.domain.grounding import LiteralReplyValidator, render_verified_reply
+from reply_mcfly.ports.email import HistoryPage
 
 pytestmark = pytest.mark.integration
 
@@ -42,6 +43,9 @@ class FakeGmail:
             "Test",
         )
         self.send_calls = 0
+
+    def history(self, start: str) -> Iterator[HistoryPage]:
+        raise AssertionError("Live runner must not request Gmail history")
 
     def metadata(self, message_id: str) -> MessageMetadata:
         return self.email.metadata
@@ -91,7 +95,9 @@ def runner_harness() -> Iterator[tuple[LiveEmailRunner, FakeGmail, FakeRunner, E
     repository.initialize(mailbox, "100", datetime.now(UTC) + timedelta(days=1))
     gmail = FakeGmail()
     gmail.email = IncomingEmail(
-        MessageMetadata("msg-live-1", "thread-live-1", datetime.now(UTC), frozenset({"INBOX", "UNREAD"})),
+        MessageMetadata(
+            "msg-live-1", "thread-live-1", datetime.now(UTC), frozenset({"INBOX", "UNREAD"})
+        ),
         gmail.email.sender,
         "Live runner test",
         "<live@customer.invalid>",
@@ -115,7 +121,9 @@ def runner_harness() -> Iterator[tuple[LiveEmailRunner, FakeGmail, FakeRunner, E
             ids = select(EmailJobModel.id).where(EmailJobModel.mailbox_id == mailbox)
             connection.execute(delete(EmailOutboxModel).where(EmailOutboxModel.job_id.in_(ids)))
             connection.execute(delete(EmailJobModel).where(EmailJobModel.mailbox_id == mailbox))
-            connection.execute(delete(MailboxSyncState).where(MailboxSyncState.mailbox_id == mailbox))
+            connection.execute(
+                delete(MailboxSyncState).where(MailboxSyncState.mailbox_id == mailbox)
+            )
         engine.dispose()
 
 
@@ -146,7 +154,9 @@ def test_live_runner_rejects_non_incoming_message(
 ) -> None:
     live, gmail, _, _, _ = runner_harness
     gmail.email = IncomingEmail(
-        MessageMetadata("msg-live-1", "thread-live-1", datetime.now(UTC), frozenset({"INBOX", "SENT"})),
+        MessageMetadata(
+            "msg-live-1", "thread-live-1", datetime.now(UTC), frozenset({"INBOX", "SENT"})
+        ),
         gmail.email.sender,
         gmail.email.subject,
         gmail.email.message_id_header,

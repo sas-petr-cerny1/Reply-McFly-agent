@@ -97,8 +97,7 @@ class MarkdownRAGProvider:
             if anchor_hits == 0:
                 continue
             overlap = sum(
-                any(_related(t, dt) or _related(dt, t) for dt in document.tokens)
-                for t in terms
+                any(_related(t, dt) or _related(dt, t) for dt in document.tokens) for t in terms
             )
             # Anchor matches identify the subject. Overlap breaks ties.
             score = anchor_hits * 10 + overlap / max(len(terms), 1)

@@ -1,4 +1,5 @@
 """Conversation History: source provenance, isolation, and exact-quote grounding."""
+
 from datetime import UTC, datetime
 
 import pytest
@@ -14,7 +15,7 @@ from reply_mcfly.domain.email import (
 from reply_mcfly.domain.grounding import LiteralReplyValidator, render_verified_reply
 
 
-def make_email(history=()):
+def make_email(history: tuple[ThreadHistoryPassage, ...] = ()) -> IncomingEmail:
     return IncomingEmail(
         metadata=MessageMetadata(
             "current", "thread-A", datetime.now(UTC), frozenset({"INBOX", "UNREAD"})
@@ -28,7 +29,7 @@ def make_email(history=()):
     )
 
 
-def draft(source, quote):
+def draft(source: str, quote: str) -> ReplyDraft:
     evidence = [Evidence(source_id=source, exact_quote=quote)]
     return ReplyDraft(
         response_type="GENERATED",
@@ -39,7 +40,7 @@ def draft(source, quote):
     )
 
 
-def test_previous_message_can_ground_follow_up():
+def test_previous_message_can_ground_follow_up() -> None:
     email = make_email(
         (
             ThreadHistoryPassage(
@@ -52,7 +53,7 @@ def test_previous_message_can_ground_follow_up():
     LiteralReplyValidator().validate(email, draft("thread:previous", "Cislo pozadavku je 12345."))
 
 
-def test_unknown_cross_thread_source_rejected():
+def test_unknown_cross_thread_source_rejected() -> None:
     email = make_email(
         (
             ThreadHistoryPassage(
@@ -68,7 +69,7 @@ def test_unknown_cross_thread_source_rejected():
         )
 
 
-def test_invented_history_quote_rejected():
+def test_invented_history_quote_rejected() -> None:
     email = make_email(
         (
             ThreadHistoryPassage(
@@ -84,7 +85,7 @@ def test_invented_history_quote_rejected():
         )
 
 
-def test_history_source_is_absent_for_new_thread():
+def test_history_source_is_absent_for_new_thread() -> None:
     with pytest.raises(WorkflowError, match="INVALID_EVIDENCE"):
         LiteralReplyValidator().validate(
             make_email(), draft("thread:previous", "Cislo pozadavku je 12345.")

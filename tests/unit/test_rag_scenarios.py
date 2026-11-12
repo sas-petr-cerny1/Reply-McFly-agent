@@ -31,9 +31,7 @@ def _with_rag(email: IncomingEmail) -> IncomingEmail:
     passages = _PROVIDER.retrieve(build_rag_retrieval_query(email))
     return replace(
         email,
-        rag_passages=tuple(
-            RagPassage(p.source_id, p.text, p.provenance) for p in passages
-        ),
+        rag_passages=tuple(RagPassage(p.source_id, p.text, p.provenance) for p in passages),
     )
 
 
@@ -84,7 +82,9 @@ def test_t01_demobox_rules_from_kb01() -> None:
         ),
         Evidence(
             source_id=email.rag_passages[0].source_id,
-            exact_quote="- **Limit:** Maximálně 2 uznané škodní události během 12 po sobě jdoucích měsíců.",
+            exact_quote=(
+                "- **Limit:** Maximálně 2 uznané škodní události během 12 po sobě jdoucích měsíců."
+            ),
         ),
     ]
     for item in evidence:
@@ -101,7 +101,9 @@ def test_t01_demobox_rules_from_kb01() -> None:
 
 def test_t02_pdf_order_id_with_kb01_rules() -> None:
     attachment = "Objednávka DEMO-84721, aktivní služba DemoBox+."
-    email = _with_rag(_email("Prosím o shrnutí podmínek k mé objednávce v příloze.", attachment=attachment))
+    email = _with_rag(
+        _email("Prosím o shrnutí podmínek k mé objednávce v příloze.", attachment=attachment)
+    )
     assert any("DEMO-84721" in p.text for p in email.attachment_passages)
     assert email.rag_passages
     evidence = [
@@ -122,9 +124,7 @@ def test_t02_pdf_order_id_with_kb01_rules() -> None:
 
 def test_t03_damaged_shipment_kb02() -> None:
     attachment = "DEMO-65432\nPravý roh displeje je roztržený."
-    email = _with_rag(
-        _email("Balík přišel protržený, prosím o postup.", attachment=attachment)
-    )
+    email = _with_rag(_email("Balík přišel protržený, prosím o postup.", attachment=attachment))
     assert email.rag_passages[0].source_id.startswith("rag:KB02_")
     kb = email.rag_passages[0].text
     evidence = [
@@ -145,7 +145,9 @@ def test_t03_damaged_shipment_kb02() -> None:
         ),
         Evidence(
             source_id=email.rag_passages[0].source_id,
-            exact_quote="3. **Obal:** Veškerý obalový materiál je nutné uchovat do vyřízení případu.",
+            exact_quote=(
+                "3. **Obal:** Veškerý obalový materiál je nutné uchovat do vyřízení případu."
+            ),
         ),
     ]
     for item in evidence[1:]:
@@ -164,9 +166,7 @@ def test_t03_damaged_shipment_kb02() -> None:
 
 def test_t04_missing_cable_kb03() -> None:
     attachment = "Záznam 752184: v balení chybí napájecí kabel."
-    email = _with_rag(
-        _email("Chybí mi kabel z balení, viz záznam.", attachment=attachment)
-    )
+    email = _with_rag(_email("Chybí mi kabel z balení, viz záznam.", attachment=attachment))
     assert email.rag_passages[0].source_id.startswith("rag:KB03_")
     kb = email.rag_passages[0].text
     evidence = [

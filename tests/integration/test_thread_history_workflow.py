@@ -5,6 +5,7 @@ Mirrors the live ""Reply McFly - test 06"" thread from Gmail export:
   2) Follow-up asking what number they gave earlier
   3) Outgoing mail cites the *first* message via thread_history, not the question text
 """
+
 from __future__ import annotations
 
 import os
@@ -29,7 +30,9 @@ from reply_mcfly.application.reply_service import FallbackTemplates, ReplyServic
 from reply_mcfly.domain.email import (
     Evidence,
     IncomingEmail,
+    Job,
     MessageMetadata,
+    OutboxEntry,
     ReplyDraft,
     Status,
     ThreadHistoryPassage,
@@ -107,13 +110,13 @@ class ScenarioGmail:
             return self.first
         raise WorkflowError("GMAIL_RESOURCE_NOT_FOUND")
 
-    def send(self, job, entry) -> str:
+    def send(self, job: Job, entry: OutboxEntry) -> str:
         if not self.send_enabled:
             raise WorkflowError("SEND_DISABLED")
         self.send_calls += 1
         return "sent-follow-up-1"
 
-    def find_sent(self, job, entry) -> str | None:
+    def find_sent(self, job: Job, entry: OutboxEntry) -> str | None:
         return "sent-follow-up-1"
 
 
@@ -141,7 +144,9 @@ class ThreadHistoryFakeRunner:
 
 
 @pytest.fixture
-def thread_history_harness() -> Iterator[tuple[LiveEmailRunner, ScenarioGmail, ThreadHistoryFakeRunner, Engine]]:
+def thread_history_harness() -> Iterator[
+    tuple[LiveEmailRunner, ScenarioGmail, ThreadHistoryFakeRunner, Engine]
+]:
     url = os.environ.get("TEST_DATABASE_URL")
     if not url:
         pytest.fail("TEST_DATABASE_URL is required")

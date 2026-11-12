@@ -7,8 +7,10 @@ from google.genai import errors, types
 
 from reply_mcfly.adapters.gemini_adapter import (
     AttachmentExtractionResult,
+    ExtractedPassage,
     GeminiAdapter,
     _draft_from_response,
+    _usage_counts,
 )
 from reply_mcfly.application.attachment_processor import ValidatedAttachment
 from reply_mcfly.domain.email import (
@@ -123,6 +125,8 @@ def test_uses_sdk_parsed_reply_draft_without_revalidation() -> None:
     ("text", "code"),
     [
         (None, "AI_OUTPUT_EMPTY"),
+        ("", "AI_OUTPUT_EMPTY"),
+        (" \n", "AI_OUTPUT_EMPTY"),
         ("not json", "AI_OUTPUT_INVALID_JSON"),
         ('{"response_type":"GENERATED"}', "AI_OUTPUT_SCHEMA_INVALID"),
     ],
@@ -194,12 +198,10 @@ def test_attachment_extract_includes_email_context() -> None:
             candidates=[types.Candidate(finish_reason=types.FinishReason.STOP)],
             parsed=AttachmentExtractionResult(
                 passages=[
-                    {
-                        "source_id": "attachment:0",
-                        "extracted_text": (
-                            "DEMO-65432\nPravý roh displeje je roztržený."
-                        ),
-                    }
+                    ExtractedPassage(
+                        source_id="attachment:0",
+                        extracted_text="DEMO-65432\nPravý roh displeje je roztržený.",
+                    )
                 ]
             ),
         )
@@ -246,3 +248,24 @@ def test_gemini_api_failure_classification(status: int, retryable: bool) -> None
         with pytest.raises(WorkflowError, match="GEMINI_API_ERROR") as error:
             GeminiAdapter("synthetic-project", "eu", "synthetic-model").run(email(), 10)
         assert error.value.retryable is retryable
+
+
+@pytest.mark.parametrize(
+    ("usage", "expected"),
+    [
+        (
+            None,
+            {"prompt_token_count": None, "candidates_token_count": None, "total_token_count": None},
+        ),
+        (
+            types.GenerateContentResponseUsageMetadata(
+                prompt_token_count=0, candidates_token_count=12, total_token_count=12
+            ),
+            {"prompt_token_count": 0, "candidates_token_count": 12, "total_token_count": 12},
+        ),
+    ],
+)
+def test_usage_counts_preserves_missing_and_reported_values(
+    usage: types.GenerateContentResponseUsageMetadata | None, expected: dict[str, int | None]
+) -> None:
+    assert _usage_counts(types.GenerateContentResponse(usage_metadata=usage)) == expected

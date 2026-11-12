@@ -3,6 +3,7 @@ from __future__ import annotations
 import json
 import time
 from enum import StrEnum
+from typing import NoReturn
 
 from google import genai
 from google.genai import errors, types
@@ -120,13 +121,7 @@ def _finish_reason_name(response: types.GenerateContentResponse) -> str | None:
 
 
 def _usage_counts(response: types.GenerateContentResponse) -> dict[str, int | None]:
-    usage = response.usage_metadata
-    if usage is None:
-        return {
-            "prompt_token_count": None,
-            "candidates_token_count": None,
-            "total_token_count": None,
-        }
+    usage = response.usage_metadata or types.GenerateContentResponseUsageMetadata()
     return {
         "prompt_token_count": usage.prompt_token_count,
         "candidates_token_count": usage.candidates_token_count,
@@ -135,7 +130,9 @@ def _usage_counts(response: types.GenerateContentResponse) -> dict[str, int | No
 
 
 def _validation_field_names(error: ValidationError) -> list[str]:
-    return [f"{'.'.join(str(part) for part in item['loc'])}:{item['type']}" for item in error.errors()]
+    return [
+        f"{'.'.join(str(part) for part in item['loc'])}:{item['type']}" for item in error.errors()
+    ]
 
 
 def _json_invalid(error: ValidationError) -> bool:
@@ -180,7 +177,7 @@ def _raise_output_error(
     response: types.GenerateContentResponse,
     validation_fields: list[str] | None = None,
     attempt: int = 1,
-) -> None:
+) -> NoReturn:
     _emit_failure(
         code=code,
         category=category,
@@ -199,7 +196,9 @@ def _blocked(response: types.GenerateContentResponse) -> bool:
     return finish in BLOCKED_FINISH_REASONS if finish else False
 
 
-def _draft_from_response(response: types.GenerateContentResponse, *, attempt: int = 1) -> ReplyDraft:
+def _draft_from_response(
+    response: types.GenerateContentResponse, *, attempt: int = 1
+) -> ReplyDraft:
     if isinstance(response.parsed, ReplyDraft):
         return response.parsed
     if _blocked(response):
@@ -218,8 +217,7 @@ def _draft_from_response(response: types.GenerateContentResponse, *, attempt: in
             attempt=attempt,
         )
     text = response.text
-    has_text = text is not None and bool(text.strip())
-    if not has_text:
+    if text is None or not text.strip():
         category = (
             OutputValidationCategory.INCOMPLETE_GENERATION
             if finish in INCOMPLETE_FINISH_REASONS
@@ -231,7 +229,6 @@ def _draft_from_response(response: types.GenerateContentResponse, *, attempt: in
             else "AI_OUTPUT_EMPTY"
         )
         _raise_output_error(code, category, response, attempt=attempt)
-    assert text is not None
     try:
         draft = ReplyDraft.model_validate_json(text)
     except ValidationError as error:

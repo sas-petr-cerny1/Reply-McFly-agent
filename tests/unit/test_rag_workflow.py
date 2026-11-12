@@ -1,5 +1,6 @@
 from dataclasses import replace
 from datetime import UTC, datetime
+from unittest.mock import create_autospec
 from uuid import uuid4
 
 from reply_mcfly.adapters.markdown_rag_adapter import MarkdownRAGProvider
@@ -10,39 +11,12 @@ from reply_mcfly.domain.email import (
     IncomingEmail,
     Job,
     MessageMetadata,
+    OutboxEntry,
     ReplyDraft,
     Status,
 )
 from reply_mcfly.domain.grounding import LiteralReplyValidator, render_verified_reply
-
-
-class InMemoryRepo:
-    def __init__(self, job: Job) -> None:
-        self.job = job
-        self.stored_outbox = None
-
-    def get(self, job_id):
-        assert job_id == self.job.id
-        return self.job
-
-    def claim(self, job_id, token):
-        return replace(self.job, status=Status.PROCESSING, lease_token=token)
-
-    def outbox(self, job_id):
-        return self.stored_outbox
-
-    def transition(self, job, target, code=None):
-        self.job = replace(job, status=target, last_error_code=code)
-
-    def prepare(self, job, entry):
-        self.stored_outbox = entry
-        self.job = replace(job, status=Status.READY_TO_SEND)
-
-    def release_lease(self, job):
-        self.job = replace(job, lease_token=None)
-
-    def sent(self, job, message_id):
-        self.job = replace(job, status=Status.SENT)
+from reply_mcfly.ports.email import EmailRepository, GmailPort
 
 
 class CapturingRunner:
@@ -62,14 +36,6 @@ class CapturingRunner:
             missing_information=[],
             requires_review=False,
         )
-
-
-class GmailStub:
-    def __init__(self, email: IncomingEmail) -> None:
-        self.email = email
-
-    def message(self, message_id: str) -> IncomingEmail:
-        return self.email
 
 
 def test_processing_attaches_rag_before_runner() -> None:
@@ -92,15 +58,18 @@ def test_processing_attaches_rag_before_runner() -> None:
         None,
         0,
     )
-    repo = InMemoryRepo(job)
+    repo = create_autospec(EmailRepository, instance=True, spec_set=True)
+    repo.get.return_value = job
+    repo.claim.return_value = replace(job, status=Status.PROCESSING, lease_token=uuid4())
+    repo.outbox.return_value = None
+    gmail = create_autospec(GmailPort, instance=True, spec_set=True)
+    gmail.message.return_value = email
     runner = CapturingRunner()
-    replies = ReplyService(
-        frozenset({email.sender}), FallbackTemplates(), LiteralReplyValidator()
-    )
+    replies = ReplyService(frozenset({email.sender}), FallbackTemplates(), LiteralReplyValidator())
     service = EmailProcessingService(
-        repo,  # type: ignore[arg-type]
-        GmailStub(email),  # type: ignore[arg-type]
-        runner,  # type: ignore[arg-type]
+        repo,
+        gmail,
+        runner,
         job.mailbox_id,
         replies,
         rag=MarkdownRAGProvider(),
@@ -109,3 +78,11 @@ def test_processing_attaches_rag_before_runner() -> None:
     assert service.process(job.id, send_enabled=False) == Status.READY_TO_SEND
     assert runner.last_email is not None
     assert runner.last_email.rag_passages[0].source_id.startswith("rag:KB01_")
+
+    repo.get.assert_called_once_with(job.id)
+    repo.prepare.assert_called_once()
+    entry = repo.prepare.call_args.args[1]
+    assert isinstance(entry, OutboxEntry)
+    assert "179 Kč" in entry.draft_body
+    repo.release_lease.assert_called_once()
+    gmail.send.assert_not_called()

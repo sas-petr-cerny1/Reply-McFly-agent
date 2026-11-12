@@ -344,9 +344,9 @@ class GmailAdapter:
         """At most 3 earlier messages in this exact Gmail thread; no cross-thread data."""
         with self._service() as service:
             thread = self._execute(
-                service.users().threads().get(
-                    userId="me", id=current.metadata.thread_id, format="minimal"
-                )
+                service.users()
+                .threads()
+                .get(userId="me", id=current.metadata.thread_id, format="minimal")
             )
             if not isinstance(thread, dict) or thread.get("id") != current.metadata.thread_id:
                 raise WorkflowError("THREAD_CONTEXT_MISMATCH")
