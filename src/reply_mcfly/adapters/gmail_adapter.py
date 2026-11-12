@@ -5,8 +5,8 @@ import binascii
 import os
 import time
 from collections.abc import Callable, Iterator
-from dataclasses import replace
 from contextlib import contextmanager
+from dataclasses import replace
 from datetime import UTC, datetime
 from email import policy
 from email.message import EmailMessage, MIMEPart
@@ -22,6 +22,7 @@ from httplib2 import HttpLib2Error
 from pydantic import BaseModel, Field, ValidationError
 
 from reply_mcfly.domain.email import (
+    EmailAttachment,
     IncomingEmail,
     Job,
     MessageMetadata,
@@ -152,7 +153,7 @@ def parse_message(payload: GmailMessagePayload) -> IncomingEmail:
         or str(message.get("Return-Path", "")) == "<>"
         or sender.split("@")[0] in {"noreply", "no-reply", "mailer-daemon", "postmaster"}
     )
-    attachments = [
+    attachment_parts = [
         part
         for part in message.walk()
         if part.get_filename()
@@ -167,6 +168,23 @@ def parse_message(payload: GmailMessagePayload) -> IncomingEmail:
         "image/jpeg",
         "image/png",
     }
+    decoded: list[EmailAttachment] = []
+    for index, part in enumerate(attachment_parts):
+        try:
+            part_bytes = part.get_payload(decode=True)
+        except (TypeError, ValueError):
+            raise WorkflowError("INVALID_ATTACHMENT") from None
+        if not isinstance(part_bytes, bytes) or len(part_bytes) > 10 * 1024 * 1024:
+            raise WorkflowError("ATTACHMENT_LIMIT_EXCEEDED")
+        filename = str(part.get_filename() or f"attachment-{index + 1}")
+        decoded.append(
+            EmailAttachment(
+                f"attachment:{index}",
+                filename[:255],
+                str(part.get_content_type()).casefold(),
+                part_bytes,
+            )
+        )
     return IncomingEmail(
         payload.metadata(),
         sender,
@@ -175,8 +193,9 @@ def parse_message(payload: GmailMessagePayload) -> IncomingEmail:
         str(message.get("References", "")),
         content.strip(),
         automatic,
-        bool(attachments),
-        any(part.get_content_type() not in supported for part in attachments),
+        bool(attachment_parts),
+        any(part.get_content_type().casefold() not in supported for part in attachment_parts),
+        tuple(decoded),
     )
 
 

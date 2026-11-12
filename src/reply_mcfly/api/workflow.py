@@ -18,6 +18,7 @@ from reply_mcfly.adapters.gmail_adapter import GmailAdapter
 from reply_mcfly.adapters.google_clients import GmailServiceFactory
 from reply_mcfly.adapters.oidc_adapter import GoogleOidcVerifier
 from reply_mcfly.adapters.postgres_adapter import PostgresEmailRepository
+from reply_mcfly.application.attachment_service import AttachmentService
 from reply_mcfly.application.email_processing_service import EmailProcessingService
 from reply_mcfly.application.gmail_sync_service import GmailSyncService
 from reply_mcfly.application.reply_service import FallbackTemplates, ReplyService
@@ -87,7 +88,7 @@ def build_services(
         raise WorkflowError("INVALID_RECIPIENT_CONFIGURATION", status=503)
     gmail = GmailAdapter(GmailServiceFactory(settings.gmail_oauth_secret_version), mailbox)
     repository = PostgresEmailRepository(engine)
-    runner = GeminiAdapter(
+    gemini = GeminiAdapter(
         settings.gcp_project_id, settings.vertex_ai_location, settings.gemini_model
     )
     verifier = GoogleOidcVerifier(settings.worker_url.rstrip("/"), settings.tasks_service_account)
@@ -97,9 +98,10 @@ def build_services(
         EmailProcessingService(
             repository,
             gmail,
-            runner,
+            gemini,
             mailbox,
             ReplyService(allowed, FallbackTemplates(), LiteralReplyValidator()),
+            AttachmentService(gemini),
         ),
         verifier,
     )

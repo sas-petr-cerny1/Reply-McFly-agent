@@ -6,9 +6,11 @@ import pytest
 from google.genai import errors, types
 
 from reply_mcfly.adapters.gemini_adapter import (
+    AttachmentExtractionResult,
     GeminiAdapter,
     _draft_from_response,
 )
+from reply_mcfly.application.attachment_processor import ValidatedAttachment
 from reply_mcfly.domain.email import IncomingEmail, MessageMetadata, ReplyDraft, WorkflowError
 
 
@@ -165,6 +167,42 @@ def test_blocked_output_is_not_retried() -> None:
         with pytest.raises(WorkflowError, match="AI_OUTPUT_BLOCKED"):
             GeminiAdapter("synthetic-project", "eu", "synthetic-model").run(email(), 15)
         assert client.models.generate_content.call_count == 1
+
+
+def test_attachment_extract_includes_email_context() -> None:
+    current = email()
+    current = IncomingEmail(
+        current.metadata,
+        current.sender,
+        current.subject,
+        current.message_id_header,
+        current.references,
+        "Jaké je číslo objednávky a jaké je poškození na fotce?",
+    )
+    validated = (
+        ValidatedAttachment("attachment:0", "damage.png", "image/png", b"\x89PNG\r\n\x1a\n"),
+    )
+    with patch("reply_mcfly.adapters.gemini_adapter.genai.Client") as factory:
+        client = factory.return_value.__enter__.return_value
+        client.models.generate_content.return_value = types.GenerateContentResponse(
+            candidates=[types.Candidate(finish_reason=types.FinishReason.STOP)],
+            parsed=AttachmentExtractionResult(
+                passages=[
+                    {
+                        "source_id": "attachment:0",
+                        "extracted_text": (
+                            "DEMO-65432\nPravý roh displeje je roztržený."
+                        ),
+                    }
+                ]
+            ),
+        )
+        passages = GeminiAdapter("synthetic-project", "eu", "synthetic-model").extract(
+            current, validated, 10
+        )
+        assert passages[0].text == "DEMO-65432\nPravý roh displeje je roztržený."
+        parts = client.models.generate_content.call_args.kwargs["contents"][0].parts
+        assert "Jaké je číslo objednávky" in parts[0].text
 
 
 @pytest.mark.parametrize("status,retryable", [(400, False), (429, True), (503, True)])

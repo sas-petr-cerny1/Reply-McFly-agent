@@ -1,15 +1,22 @@
 from reply_mcfly.domain.email import Evidence, IncomingEmail, ReplyDraft, WorkflowError
 
 
+def _reply_intro(evidence: list[Evidence]) -> str:
+    if any(item.source_id.startswith("thread:") for item in evidence):
+        return "Dobrý den,\n\nv naší předchozí e-mailové konverzaci zaznělo:\n\n"
+    kinds = {item.source_id.split(":", 1)[0] for item in evidence}
+    if kinds == {"attachment"}:
+        return "Dobrý den,\n\nz ověřeného obsahu přílohy plyne:\n\n"
+    if kinds == {"email"}:
+        return "Dobrý den,\n\nve své zprávě uvádíte:\n\n"
+    return "Dobrý den,\n\nna základě ověřených podkladů:\n\n"
+
+
 def render_verified_reply(evidence: list[Evidence]) -> str:
     quotes = "\n\n".join(
         "\n".join("> " + line for line in item.exact_quote.splitlines()) for item in evidence
     )
-    intro = (
-        "Dobrý den,\n\nv naší předchozí e-mailové konverzaci zaznělo:\n\n"
-        if any(item.source_id.startswith("thread:") for item in evidence)
-        else "Dobrý den,\n\nve své zprávě uvádíte:\n\n"
-    )
+    intro = _reply_intro(evidence)
     return (
         intro
         + quotes
@@ -28,6 +35,7 @@ class LiteralReplyValidator:
             raise WorkflowError("UNVERIFIABLE_REPLY")
         sources = {f"email:{email.metadata.message_id}": email.text}
         sources.update({passage.source_id: passage.text for passage in email.thread_history})
+        sources.update({passage.source_id: passage.text for passage in email.attachment_passages})
         for item in draft.evidence:
             if (
                 item.source_id not in sources

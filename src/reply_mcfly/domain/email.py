@@ -59,6 +59,20 @@ class ThreadHistoryPassage:
 
 
 @dataclass(frozen=True)
+class EmailAttachment:
+    source_id: str
+    filename: str
+    declared_mime: str
+    data: bytes
+
+
+@dataclass(frozen=True)
+class AttachmentPassage:
+    source_id: str
+    text: str
+
+
+@dataclass(frozen=True)
 class IncomingEmail:
     metadata: MessageMetadata
     sender: str
@@ -69,6 +83,8 @@ class IncomingEmail:
     automatic: bool = False
     has_attachments: bool = False
     unsupported_attachment: bool = False
+    attachments: tuple[EmailAttachment, ...] = ()
+    attachment_passages: tuple[AttachmentPassage, ...] = ()
     thread_history: tuple[ThreadHistoryPassage, ...] = ()
 
 
@@ -182,7 +198,11 @@ def prepare_reply(
         raise WorkflowError("REPLY_REQUIRES_REVIEW")
     if (response_type == ResponseType.FALLBACK) != (fallback_reason is not None):
         raise WorkflowError("INVALID_RESPONSE_TYPE")
-    if email.has_attachments and not email.unsupported_attachment:
+    if (
+        email.has_attachments
+        and not email.unsupported_attachment
+        and not email.attachment_passages
+    ):
         raise WorkflowError("ATTACHMENT_REQUIRES_REVIEW")
     return OutboxEntry(
         job_id=job.id,

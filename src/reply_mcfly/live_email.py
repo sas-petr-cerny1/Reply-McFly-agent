@@ -9,8 +9,12 @@ from pathlib import Path
 
 from reply_mcfly.adapters.gemini_adapter import GeminiAdapter
 from reply_mcfly.adapters.gmail_adapter import GmailAdapter
-from reply_mcfly.adapters.google_clients import GmailOAuthFileFactory, assert_private_credentials_file
+from reply_mcfly.adapters.google_clients import (
+    GmailOAuthFileFactory,
+    assert_private_credentials_file,
+)
 from reply_mcfly.adapters.postgres_adapter import PostgresEmailRepository, make_engine
+from reply_mcfly.application.attachment_service import AttachmentService
 from reply_mcfly.application.email_processing_service import EmailProcessingService
 from reply_mcfly.application.live_email_runner import LiveEmailRunner, validate_live_email_settings
 from reply_mcfly.application.reply_service import FallbackTemplates, ReplyService
@@ -55,11 +59,13 @@ def main() -> int:
         repository = PostgresEmailRepository(engine)
         mailbox = settings.mailbox_id.casefold()
         gmail = GmailAdapter(GmailOAuthFileFactory(credentials_path), mailbox)
-        runner = GeminiAdapter(
+        gemini = GeminiAdapter(
             settings.gcp_project_id, settings.vertex_ai_location, settings.gemini_model
         )
         replies = ReplyService(allowed, FallbackTemplates(), LiteralReplyValidator())
-        processing = EmailProcessingService(repository, gmail, runner, mailbox, replies)
+        processing = EmailProcessingService(
+            repository, gmail, gemini, mailbox, replies, AttachmentService(gemini)
+        )
         live = LiveEmailRunner(repository, gmail, processing, mailbox)
         result = live.run(args.message_id, send_enabled=args.send)
     except WorkflowError as error:

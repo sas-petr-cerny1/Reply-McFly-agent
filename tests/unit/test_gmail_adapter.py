@@ -67,6 +67,23 @@ def test_unknown_charset_is_reported_without_echoing_untrusted_header() -> None:
     assert "private-input" not in str(failure.value)
 
 
+def test_supported_attachment_bytes_are_decoded() -> None:
+    message = EmailMessage()
+    message["From"] = "sender@customer.invalid"
+    message.set_content("Body")
+    message.add_attachment(
+        b"%PDF-1.4 test\n",
+        maintype="application",
+        subtype="pdf",
+        filename="invoice.pdf",
+    )
+    incoming = parse_message(raw_payload(message))
+    assert incoming.has_attachments
+    assert not incoming.unsupported_attachment
+    assert len(incoming.attachments) == 1
+    assert incoming.attachments[0].data.startswith(b"%PDF-")
+
+
 def test_automatic_sender_and_unsupported_attachment_are_identified() -> None:
     message = EmailMessage()
     message["From"] = "sender@customer.invalid"
