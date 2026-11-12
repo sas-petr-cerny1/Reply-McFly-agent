@@ -1,6 +1,7 @@
 import time
 from uuid import uuid4
 
+from reply_mcfly.application.telemetry import emit
 from reply_mcfly.domain.email import WorkflowError, incoming
 from reply_mcfly.ports.email import EmailRepository, GmailPort, TaskQueuePort
 
@@ -20,7 +21,18 @@ class GmailSyncService:
                 for message_id in page.message_ids:
                     if time.monotonic() + 10 > deadline:
                         raise WorkflowError("DEPENDENCY_TIMEOUT", retryable=True, status=503)
-                    metadata = self.gmail.metadata(message_id)
+                    try:
+                        metadata = self.gmail.metadata(message_id)
+                    except WorkflowError as error:
+                        if error.code != "GMAIL_RESOURCE_NOT_FOUND":
+                            raise
+                        # Deleted since the history record; retrying can never succeed.
+                        emit(
+                            "sync_message_skipped",
+                            gmail_message_id=message_id,
+                            error_code=error.code,
+                        )
+                        continue
                     if incoming(metadata):
                         job_id = self.repository.enqueue(mailbox_id, metadata)
                         self.queue.process(job_id)
