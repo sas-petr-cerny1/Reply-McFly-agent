@@ -97,13 +97,22 @@ class _ReadableHTML(HTMLParser):
             self.text.append(data)
 
 
+# Gmail RAW contains the full RFC 2822 MIME message encoded in base64url.
+# MIME attachments are usually base64-encoded inside that message as well.
+# Keep bounded limits at both encoding layers; attachment validation remains separate.
+MAX_GMAIL_RAW_CHARS = 16 * 1024 * 1024
+MAX_GMAIL_DECODED_BYTES = 12 * 1024 * 1024
+
+
 def decode_mime(payload: GmailMessagePayload) -> EmailMessage:
-    if payload.raw is None or len(payload.raw) > 2_000_000:
+    if payload.raw is None or len(payload.raw) > MAX_GMAIL_RAW_CHARS:
         raise WorkflowError("EMAIL_TOO_LARGE_OR_MISSING")
     try:
         data = base64.b64decode(
             payload.raw + "=" * (-len(payload.raw) % 4), altchars=b"-_", validate=True
         )
+        if len(data) > MAX_GMAIL_DECODED_BYTES:
+            raise WorkflowError("EMAIL_TOO_LARGE_OR_MISSING")
         message = BytesParser(policy=policy.default).parsebytes(data)
     except (ValueError, binascii.Error):
         raise WorkflowError("INVALID_EMAIL") from None
