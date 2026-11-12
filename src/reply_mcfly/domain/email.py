@@ -73,6 +73,13 @@ class AttachmentPassage:
 
 
 @dataclass(frozen=True)
+class RagPassage:
+    source_id: str
+    text: str
+    provenance: str
+
+
+@dataclass(frozen=True)
 class IncomingEmail:
     metadata: MessageMetadata
     sender: str
@@ -86,6 +93,7 @@ class IncomingEmail:
     attachments: tuple[EmailAttachment, ...] = ()
     attachment_passages: tuple[AttachmentPassage, ...] = ()
     thread_history: tuple[ThreadHistoryPassage, ...] = ()
+    rag_passages: tuple[RagPassage, ...] = ()
 
 
 class Evidence(BaseModel):

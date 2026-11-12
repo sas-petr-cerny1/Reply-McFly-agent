@@ -1,17 +1,22 @@
 import time
+from dataclasses import replace
 from datetime import UTC, datetime
 from uuid import UUID, uuid4
 
 from reply_mcfly.application.attachment_service import UnconfiguredAttachmentService
+from reply_mcfly.application.rag_query import build_rag_retrieval_query
 from reply_mcfly.application.reply_service import ReplyService
 from reply_mcfly.application.telemetry import emit
 from reply_mcfly.domain.email import (
     TERMINAL,
     FallbackReason,
+    IncomingEmail,
+    RagPassage,
     Status,
     WorkflowError,
     require_mailbox,
 )
+from reply_mcfly.ports.capabilities import RAGProvider
 from reply_mcfly.ports.email import AttachmentEnricher, EmailRepository, GmailPort, WorkflowRunner
 
 
@@ -24,10 +29,27 @@ class EmailProcessingService:
         mailbox_id: str,
         replies: ReplyService,
         attachments: AttachmentEnricher | None = None,
+        *,
+        rag: RAGProvider | None = None,
+        enable_rag: bool = False,
     ) -> None:
         self.repository, self.gmail, self.runner = repository, gmail, runner
         self.mailbox_id, self.replies = mailbox_id, replies
         self.attachments = attachments or UnconfiguredAttachmentService()
+        self._rag = rag if enable_rag else None
+
+    def _apply_rag(self, email: IncomingEmail) -> IncomingEmail:
+        if self._rag is None:
+            return email
+        passages = self._rag.retrieve(build_rag_retrieval_query(email))
+        if not passages:
+            return email
+        return replace(
+            email,
+            rag_passages=tuple(
+                RagPassage(item.source_id, item.text, item.provenance) for item in passages
+            ),
+        )
 
     def process(self, job_id: UUID, *, send_enabled: bool = True) -> Status:
         require_mailbox(self.repository.get(job_id).mailbox_id, self.mailbox_id)
@@ -65,12 +87,18 @@ class EmailProcessingService:
                         if remaining <= 0:
                             raise WorkflowError("DEPENDENCY_TIMEOUT", retryable=True, status=503)
                         email = self.attachments.enrich(email, min(25, remaining))
+                    email = self._apply_rag(email)
                     remaining = deadline - time.monotonic() - 45
                     if remaining <= 0:
                         raise WorkflowError("DEPENDENCY_TIMEOUT", retryable=True, status=503)
                     draft = self.runner.run(email, min(30, remaining))
                     entry = self.replies.draft(job, email, draft)
             else:
+                if email.has_attachments and not email.unsupported_attachment:
+                    remaining = deadline - time.monotonic() - 55
+                    if remaining > 0:
+                        email = self.attachments.enrich(email, min(25, remaining))
+                email = self._apply_rag(email)
                 self.replies.validate_stored(job, email, entry)
             if not send_enabled:
                 self.repository.prepare(job, entry)
