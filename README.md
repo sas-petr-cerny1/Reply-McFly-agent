@@ -313,7 +313,8 @@ python -m reply_mcfly.rag search --query "Kolik stojí AirDock 8?"
 ```
 
 Postup nasazení, ověření, chybové stavy a návrat k Markdown režimu popisuje
-[`RUNBOOK_RAG_PGVECTOR.md`](RUNBOOK_RAG_PGVECTOR.md). Živé Vertex AI embeddingy, Cloud SQL
+[`RUNBOOK_RAG_PGVECTOR.md`](RUNBOOK_RAG_PGVECTOR.md); nasazení celé verze, rollback a měření
+latence [`RUNBOOK_DEPLOYMENT.md`](RUNBOOK_DEPLOYMENT.md). Živé Vertex AI embeddingy, Cloud SQL
 a Gmail E2E s tímto backendem zatím **nebyly ověřeny**; lokální testy používají řízený fake.
 
 ## Historické lokální výsledky před rekonstrukcí Git historie

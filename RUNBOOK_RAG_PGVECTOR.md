@@ -48,8 +48,8 @@ textů) a potřebují ADC s přístupem k projektu. Zápis jde do databáze z `M
 
 ```sh
 # 1. .env: MCFLY_ENABLE_RAG=true, MCFLY_RAG_BACKEND=pgvector
-docker compose up -d --build            # ingress spustí alembic upgrade head (0004)
-docker compose exec -T ingress alembic current       # očekávej 0004 (head)
+docker compose up -d --build            # ingress spustí alembic upgrade head
+docker compose exec -T ingress alembic current       # očekávej 0005 (head)
 
 # 2. kontrola katalogu a plán (bez sítě / bez zápisu)
 docker compose exec -T worker python -m reply_mcfly.rag validate
@@ -83,6 +83,30 @@ Očekávané pasáže (skutečná `source_id` z katalogu):
 | Měří HomeSense H3 CO₂? | `rag:mf-sensor-03:mereni-a-provoz:6d71bdc8bcda` | Produkt neměří CO₂ |
 
 Pořadí pasáží uvnitř produktu určuje živý model; lokálně je ověřeno jen s fake embeddingem.
+
+## Oprávnění v databázi
+
+Worker má znalostní tabulku jen číst; zapisuje do ní pouze indexace. Ostatní provozní
+tabulky (`mailbox_sync_state`, `email_jobs`, `email_outbox`, `alembic_version`) zůstávají
+Workeru beze změny. Šablona níže **nebyla spuštěna**; role doplňte podle skutečných
+uživatelů v Cloud SQL a spusťte ji jako vlastník tabulky až po migraci 0004.
+
+```sql
+-- Samostatná identita pro `rag sync --apply` (heslo/IAM mimo repozitář).
+CREATE ROLE mcfly_rag_indexer LOGIN;
+GRANT USAGE ON SCHEMA public TO mcfly_rag_indexer;
+GRANT SELECT, INSERT, UPDATE, DELETE ON rag_product_chunks TO mcfly_rag_indexer;
+GRANT SELECT ON alembic_version TO mcfly_rag_indexer;   -- CLI vypisuje stav migrace
+
+-- Worker: čtení znalostí, žádný zápis. <worker_role> = DB uživatel služby reply-mcfly-worker.
+REVOKE INSERT, UPDATE, DELETE, TRUNCATE ON rag_product_chunks FROM <worker_role>;
+GRANT SELECT ON rag_product_chunks TO <worker_role>;
+```
+
+Pokud je `<worker_role>` zároveň vlastníkem tabulky (spouštěl migrace), `REVOKE` ho
+neomezí. Oddělení pak vyžaduje, aby migrace spouštěl jiný uživatel než Worker, nebo
+`ALTER TABLE rag_product_chunks OWNER TO <migrační_role>`. Indexace se spouští s vlastním
+`MCFLY_DATABASE_URL` identity `mcfly_rag_indexer`; Worker ji nikdy nepoužívá.
 
 ## Změna dokumentu
 
@@ -137,8 +161,8 @@ Nic z toho nebylo provedeno:
 
 1. Ověřit dostupnost `gemini-embedding-001` ve schváleném regionu
    (`MCFLY_RAG_EMBEDDING_LOCATION`); model nespouštět přes globální endpoint bez schválení.
-2. Na Cloud SQL: povolit rozšíření `vector` a spustit `alembic upgrade head` (0004).
-3. Worker identitě dát jen `SELECT` na `rag_product_chunks`; indexační identitě zápis.
+2. Na Cloud SQL spustit `alembic upgrade head` (0004 tabulka RAG, 0005 sloupec outboxu).
+3. Nastavit oddělená oprávnění podle kapitoly „Oprávnění v databázi“.
 4. `rag sync --apply` proti Cloud SQL (zápis 18 chunků, 18 volání embedding API).
 5. `rag search` pro tři referenční dotazy a jeden negativní.
 6. Nastavit Workeru `MCFLY_RAG_BACKEND=pgvector` a nasadit.
