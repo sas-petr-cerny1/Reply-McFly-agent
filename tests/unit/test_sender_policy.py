@@ -15,7 +15,6 @@ from reply_mcfly.domain.email import (
 )
 from reply_mcfly.domain.sender_policy import SenderConfigurationError, parse_sender_policy
 
-
 MAILBOX = "agent@agent.invalid"
 
 

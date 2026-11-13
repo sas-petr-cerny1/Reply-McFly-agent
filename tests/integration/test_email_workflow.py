@@ -52,8 +52,8 @@ from reply_mcfly.domain.email import (
     WorkflowError,
 )
 from reply_mcfly.domain.grounding import LiteralReplyValidator, render_verified_reply
-from reply_mcfly.domain.sender_policy import parse_sender_policy
 from reply_mcfly.domain.reply_templates import FALLBACK_MISSING_INFORMATION
+from reply_mcfly.domain.sender_policy import parse_sender_policy
 from reply_mcfly.ports.email import HistoryPage
 
 pytestmark = pytest.mark.integration
@@ -992,9 +992,7 @@ def test_wildcard_sender_policy_accepts_unlisted_external_sender(harness: Harnes
         harness.mailbox,
         harness.replies,
     )
-    harness.gmail.email = replace(
-        harness.gmail.email, sender="external-unlisted@customer.invalid"
-    )
+    harness.gmail.email = replace(harness.gmail.email, sender="external-unlisted@customer.invalid")
     job_id = harness.enqueue()
     assert harness.processing.process(job_id) == Status.SENT
     assert harness.runner.calls == 1

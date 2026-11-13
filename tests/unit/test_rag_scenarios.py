@@ -22,8 +22,8 @@ from reply_mcfly.domain.email import (
     WorkflowError,
 )
 from reply_mcfly.domain.grounding import LiteralReplyValidator, render_verified_reply
-from reply_mcfly.domain.sender_policy import parse_sender_policy
 from reply_mcfly.domain.reply_templates import FALLBACK_MISSING_INFORMATION
+from reply_mcfly.domain.sender_policy import parse_sender_policy
 
 _PROVIDER = MarkdownRAGProvider()
 
