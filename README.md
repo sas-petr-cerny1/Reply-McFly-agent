@@ -64,6 +64,15 @@ MIME/reply hlavičky, SQL lease včetně souběhu a stavu DELIVERY_UNKNOWN.
 Vkládají jen syntetické mailboxy a po sobě odstraňují vlastní záznamy.
 Chybějící `TEST_DATABASE_URL` při integračním běhu je chyba, nikoliv přeskočený test.
 
+Syntetická větev Ingress → sync → Worker, včetně historie, příloh, RAG a pgvector
+s deterministickými embeddingy, běží jedním příkazem. Gmail, Gemini, Secret Manager,
+Cloud Tasks a Cloud SQL se z ní nevolají. Časy v reportu jsou latence uvnitř procesu
+testu, ne důkaz limitu 120 sekund na Cloud Run.
+
+```sh
+docker compose run --build --rm tests pytest -q tests/integration/test_synthetic_e2e.py
+```
+
 ## Zápis, čtení a restart
 
 Interní diagnostická služba zapisuje syntetický záznam do skutečné blueprintové
