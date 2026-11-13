@@ -24,8 +24,10 @@ _STOP = frozenset(
     "potrebuji chci otazka dotaz dnes aktualni stav".split()
 )
 # Topic anchors reduce the risk of returning an unrelated policy on generic queries.
+# These are hand-tuned for the bundled documents; any other document declares its own
+# anchors on a "**Témata:**" line, so adding knowledge needs no code change.
 _TOPIC_PREFIXES = {
-    "KB01": ("demobox", "pojist", "spoluuc", "kryt", "pojist", "polit", "aktivac"),
+    "KB01": ("demobox", "pojist", "spoluuc", "kryt", "polit", "aktivac"),
     "KB02": ("poskoz", "preprav", "doprav", "krabic", "trhlin", "obal", "protrz", "promack"),
     "KB03": ("chybej", "chyb", "kabel", "adapter", "prislusen", "soucast", "neupln", "nahradni"),
 }
@@ -37,6 +39,18 @@ def _tokens(text: str) -> set[str]:
     return {word for word in re.findall(r"[a-z0-9]+", clean) if len(word) > 2 and word not in _STOP}
 
 
+_TOPICS_LINE = re.compile(r"^\**\s*t[eé]mata\s*:\**(.*)$", re.IGNORECASE | re.MULTILINE)
+_STEM_LENGTH = 6
+
+
+def _declared_anchors(content: str) -> tuple[str, ...]:
+    """Crude stems of the document's own topic keywords, matching Czech inflections."""
+    match = _TOPICS_LINE.search(content)
+    if match is None:
+        return ()
+    return tuple(sorted({word[:_STEM_LENGTH] for word in _tokens(match.group(1))}))
+
+
 def _related(token: str, prefix: str) -> bool:
     return token.startswith(prefix) or (len(token) >= 5 and prefix.startswith(token))
 
@@ -45,7 +59,7 @@ def _related(token: str, prefix: str) -> bool:
 class _Document:
     source: SourcePassage
     tokens: frozenset[str]
-    topic: str
+    anchors: tuple[str, ...]
 
 
 class MarkdownRAGProvider:
@@ -82,7 +96,11 @@ class MarkdownRAGProvider:
                 provenance=path.name,
             )
             topic = path.stem.split("_", 1)[0]
-            docs.append(_Document(source, frozenset(_tokens(content)), topic))
+            anchors = _TOPIC_PREFIXES.get(topic) or _declared_anchors(content)
+            if not anchors:
+                # Without anchors the document could never be retrieved; fail loudly instead.
+                raise ValueError("RAG_DOCUMENT_TOPICS_MISSING")
+            docs.append(_Document(source, frozenset(_tokens(content)), anchors))
         self._documents = tuple(docs)
         self._max_results = max_results
 
@@ -92,8 +110,9 @@ class MarkdownRAGProvider:
             return ()
         scored: list[tuple[float, _Document]] = []
         for document in self._documents:
-            anchors = _TOPIC_PREFIXES.get(document.topic, ())
-            anchor_hits = sum(any(_related(t, prefix) for prefix in anchors) for t in terms)
+            anchor_hits = sum(
+                any(_related(t, prefix) for prefix in document.anchors) for t in terms
+            )
             if anchor_hits == 0:
                 continue
             overlap = sum(

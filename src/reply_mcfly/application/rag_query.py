@@ -1,4 +1,4 @@
-"""Build a safe lexical retrieval query from trusted customer text and attachment facts."""
+"""Build a lexical retrieval query from customer text and filtered attachment facts."""
 
 from __future__ import annotations
 
@@ -15,7 +15,6 @@ _UNTRUSTED_LINE = re.compile(
     r"|knowledge\s*base"
     r"|přepsat|přepiš|nová\s+pravidla"
     r"|instrukce\s+pro\s+asistenta"
-    r"|spoluúčast\s+je\s+0"
     r"|assistant\s+must"
     r")"
 )
