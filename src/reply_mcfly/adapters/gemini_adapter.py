@@ -5,6 +5,7 @@ import time
 from enum import StrEnum
 from typing import NoReturn
 
+import httpx
 from google import genai
 from google.genai import errors, types
 from pydantic import BaseModel, ConfigDict, Field, ValidationError
@@ -97,6 +98,21 @@ BLOCKED_FINISH_REASONS = frozenset(
     }
 )
 INCOMPLETE_FINISH_REASONS = frozenset({"MAX_TOKENS"})
+
+
+def _transport_errors() -> tuple[type[Exception], ...]:
+    # The SDK surfaces timeouts and connection failures as raw transport exceptions,
+    # from httpx or from its optional drop-in fork httpx2.
+    found: list[type[Exception]] = [httpx.TransportError]
+    try:
+        import httpx2
+    except ImportError:
+        return tuple(found)
+    found.append(httpx2.TransportError)
+    return tuple(found)
+
+
+TRANSPORT_ERRORS = _transport_errors()
 RETRYABLE_OUTPUT_CODES = frozenset(
     {
         "AI_OUTPUT_EMPTY",
@@ -357,6 +373,8 @@ class GeminiAdapter:
             raise WorkflowError(
                 "GEMINI_API_ERROR", retryable=error.code == 429 or error.code >= 500, status=503
             ) from None
+        except TRANSPORT_ERRORS:
+            raise WorkflowError("GEMINI_UNAVAILABLE", retryable=True, status=503) from None
 
     def run(self, email: IncomingEmail, timeout: float) -> ReplyDraft:
         deadline = time.monotonic() + max(0.0, timeout)
@@ -446,3 +464,5 @@ class GeminiAdapter:
             raise WorkflowError(
                 "GEMINI_API_ERROR", retryable=error.code == 429 or error.code >= 500, status=503
             ) from None
+        except TRANSPORT_ERRORS:
+            raise WorkflowError("GEMINI_UNAVAILABLE", retryable=True, status=503) from None
