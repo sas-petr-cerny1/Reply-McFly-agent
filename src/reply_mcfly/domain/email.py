@@ -148,6 +148,8 @@ class OutboxEntry:
     response_type: ResponseType = ResponseType.GENERATED
     fallback_reason: FallbackReason | None = None
     evidence: tuple[tuple[str, str], ...] = ()
+    # Extraction is not deterministic; a retry must validate against these exact passages.
+    attachment_passages: tuple[AttachmentPassage, ...] = ()
 
 
 def require_mailbox(actual: str, allowed: str) -> None:
@@ -225,4 +227,5 @@ def prepare_reply(
         response_type=response_type,
         fallback_reason=fallback_reason,
         evidence=evidence,
+        attachment_passages=email.attachment_passages,
     )

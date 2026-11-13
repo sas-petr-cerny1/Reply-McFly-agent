@@ -24,6 +24,7 @@ from reply_mcfly.application.telemetry import emit
 from reply_mcfly.domain.email import (
     TERMINAL,
     TRANSITIONS,
+    AttachmentPassage,
     Evidence,
     FallbackReason,
     Job,
@@ -132,6 +133,7 @@ class EmailOutboxModel(Base):
     response_type: Mapped[str] = mapped_column(String(16))
     fallback_reason: Mapped[str | None] = mapped_column(String(64))
     evidence: Mapped[list[dict[str, str]]] = mapped_column(JSONB, server_default="[]")
+    attachment_passages: Mapped[list[dict[str, str]]] = mapped_column(JSONB, server_default="[]")
     in_reply_to: Mapped[str] = mapped_column(String(998))
     references: Mapped[str] = mapped_column(String(2000))
     status: Mapped[str] = mapped_column(String(32))
@@ -344,6 +346,10 @@ class PostgresEmailRepository:
                 "evidence": [
                     {"source_id": source, "exact_quote": quote} for source, quote in entry.evidence
                 ],
+                "attachment_passages": [
+                    {"source_id": passage.source_id, "text": passage.text}
+                    for passage in entry.attachment_passages
+                ],
             }
             session.execute(
                 insert(EmailOutboxModel)
@@ -370,6 +376,10 @@ class PostgresEmailRepository:
                 tuple(
                     (item.source_id, item.exact_quote)
                     for item in (Evidence.model_validate(value) for value in row.evidence)
+                ),
+                tuple(
+                    AttachmentPassage(value["source_id"], value["text"])
+                    for value in row.attachment_passages
                 ),
             )
 

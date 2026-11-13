@@ -116,7 +116,11 @@ class EmailProcessingService:
                     draft = self.runner.run(email, min(30, remaining))
                     entry = self.replies.draft(job, email, draft)
             else:
-                if email.has_attachments and not email.unsupported_attachment:
+                if entry.attachment_passages:
+                    # Reuse the extraction the stored evidence was verified against.
+                    email = replace(email, attachment_passages=entry.attachment_passages)
+                elif email.has_attachments and not email.unsupported_attachment:
+                    # Outbox rows written before passages were persisted.
                     remaining = deadline - time.monotonic() - 55
                     if remaining > 0:
                         email = self.attachments.enrich(email, min(25, remaining))
