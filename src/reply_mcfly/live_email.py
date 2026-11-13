@@ -79,7 +79,9 @@ def main() -> int:
             rag_query_builder=rag.query_builder,
             rag_timeout=rag.timeout,
         )
-        live = LiveEmailRunner(repository, gmail, processing, mailbox)
+        live = LiveEmailRunner(
+            repository, gmail, processing, mailbox, history_baseline=gmail.profile_history
+        )
         result = live.run(args.message_id, send_enabled=args.send)
     except WorkflowError as error:
         print(

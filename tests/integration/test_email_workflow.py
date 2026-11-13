@@ -630,7 +630,9 @@ def test_local_rag_conversation_e2e(
         rag=MarkdownRAGProvider(),
         enable_rag=rag_enabled,
     )
-    live = LiveEmailRunner(harness.repository, gmail, processing, harness.mailbox)
+    live = LiveEmailRunner(
+        harness.repository, gmail, processing, harness.mailbox, history_baseline=lambda: "100"
+    )
 
     def respond(
         *, model: str, contents: str, config: types.GenerateContentConfig
