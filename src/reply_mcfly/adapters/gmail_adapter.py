@@ -102,6 +102,8 @@ class _ReadableHTML(HTMLParser):
 # Keep bounded limits at both encoding layers; attachment validation remains separate.
 MAX_GMAIL_RAW_CHARS = 16 * 1024 * 1024
 MAX_GMAIL_DECODED_BYTES = 12 * 1024 * 1024
+# One page keeps recovery inside a single sync deadline; older unread mail needs an operator.
+RECOVERY_MESSAGE_LIMIT = 100
 
 
 def decode_mime(payload: GmailMessagePayload) -> EmailMessage:
@@ -327,6 +329,29 @@ class GmailAdapter:
                 )
             except ValidationError:
                 raise WorkflowError("INVALID_GMAIL_WATCH") from None
+
+    def renew_watch(self, topic: str) -> datetime:
+        return datetime.fromtimestamp(int(self.watch(topic).expiration) / 1000, UTC)
+
+    def unread_inbox(self) -> tuple[str, ...]:
+        """Newest unread inbox messages; the recovery listing after an expired history id."""
+        with self._service() as service:
+            result = self._execute(
+                service.users()
+                .messages()
+                .list(userId="me", labelIds=["INBOX", "UNREAD"], maxResults=RECOVERY_MESSAGE_LIMIT)
+            )
+            if not isinstance(result, dict) or not isinstance(result.get("messages", []), list):
+                raise WorkflowError("INVALID_GMAIL_RESPONSE", status=503)
+            try:
+                return tuple(
+                    dict.fromkeys(
+                        GmailMessageId.model_validate(item).id
+                        for item in result.get("messages", [])
+                    )
+                )
+            except ValidationError:
+                raise WorkflowError("INVALID_GMAIL_RESPONSE", status=503) from None
 
     def _get(self, message_id: str, format: str) -> GmailMessagePayload:
         with self._service() as service:

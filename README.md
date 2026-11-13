@@ -88,6 +88,13 @@ Změna hesla v `.env` nemění heslo již inicializované databáze.
   na řetězec se stávajícím limitem 32 znaků. Boolean a desetinná čísla odmítá.
 - Sync čte Gmail History od uloženého checkpointu; nové příchozí nepřečtené zprávy eviduje
   v `email_jobs`. Checkpoint se posune až po zajištění Process Tasks.
+- Sync při každém běhu obnoví Gmail Watch, pokud do jeho vypršení zbývají méně než 3 dny.
+  Watch žije 7 dní a bez příchozí pošty žádný sync neproběhne, proto v cloudu naplánujte
+  denní Cloud Scheduler job, který volá `POST /tasks/sync` s OIDC identitou
+  `MCFLY_TASKS_SERVICE_ACCOUNT` a tělem `{"mailbox_id": "<schránka>"}`.
+- Když Gmail odmítne uložený checkpoint (`HISTORY_EXPIRED`), sync zařadí nejnovějších
+  100 nepřečtených zpráv z Inboxu a naváže na aktuální `historyId`. Starší nepřečtenou
+  poštu musí zkontrolovat operátor.
 - Worker atomicky rezervuje job s UUID lease tokenem; zastaralý proces nesmí přepsat jeho stav.
 - Gmail adaptér používá OAuth ze Secret Manageru. Připravuje text, MIME a reply hlavičky.
 - Gemini vrací strukturovaný návrh s důkazy. Backend dovolí jen doslovné pasáže
