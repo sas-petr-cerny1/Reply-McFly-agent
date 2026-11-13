@@ -8,6 +8,7 @@ from reply_mcfly.application.attachment_service import UnconfiguredAttachmentSer
 from reply_mcfly.application.rag_query import build_rag_retrieval_query
 from reply_mcfly.application.reply_service import ReplyService
 from reply_mcfly.application.telemetry import emit
+from reply_mcfly.application.web_query import build_web_public_query, should_invoke_web_search
 from reply_mcfly.domain.email import (
     TERMINAL,
     FallbackReason,
@@ -15,11 +16,17 @@ from reply_mcfly.domain.email import (
     OutboxEntry,
     RagPassage,
     Status,
+    WebPassage,
     WorkflowError,
     require_mailbox,
     validate_untrusted_content,
 )
-from reply_mcfly.ports.capabilities import RAGProvider, SourceLookup, SourcePassage
+from reply_mcfly.ports.capabilities import (
+    RAGProvider,
+    SourceLookup,
+    SourcePassage,
+    WebSearchProvider,
+)
 from reply_mcfly.ports.email import AttachmentEnricher, EmailRepository, GmailPort, WorkflowRunner
 
 
@@ -37,14 +44,20 @@ class EmailProcessingService:
         enable_rag: bool = False,
         rag_query_builder: Callable[[IncomingEmail], str] = build_rag_retrieval_query,
         rag_timeout: float = 0.0,
+        web: WebSearchProvider | None = None,
+        enable_web_search: bool = False,
+        web_query_builder: Callable[[IncomingEmail], str] = build_web_public_query,
+        web_timeout: float = 0.0,
         sender_daily_reply_limit: int | None = None,
     ) -> None:
         self._rag_query_builder, self._rag_timeout = rag_query_builder, rag_timeout
+        self._web_query_builder, self._web_timeout = web_query_builder, web_timeout
         self.sender_daily_reply_limit = sender_daily_reply_limit
         self.repository, self.gmail, self.runner = repository, gmail, runner
         self.mailbox_id, self.replies = mailbox_id, replies
         self.attachments = attachments or UnconfiguredAttachmentService()
         self._rag = rag if enable_rag else None
+        self._web = web if enable_web_search else None
 
     def _apply_rag(
         self, email: IncomingEmail, job_id: UUID, deadline: float, entry: OutboxEntry | None = None
@@ -72,6 +85,33 @@ class EmailProcessingService:
             email,
             rag_passages=tuple(
                 RagPassage(item.source_id, item.text, item.provenance) for item in passages
+            ),
+        )
+
+    def _apply_web(self, email: IncomingEmail, job_id: UUID, deadline: float) -> IncomingEmail:
+        if self._web is None or not should_invoke_web_search(email):
+            return email
+        if self._web_timeout and deadline - time.monotonic() - 45 < self._web_timeout:
+            raise WorkflowError("DEPENDENCY_TIMEOUT", retryable=True, status=503)
+        public_query = self._web_query_builder(email)
+        if not public_query:
+            return email
+        try:
+            passages = self._web.search(public_query)
+        except WorkflowError:
+            raise
+        except Exception:
+            emit("web_search_failed", job_id=str(job_id))
+            return email
+        emit("web_context_attached", job_id=str(job_id), web_hit_count=len(passages))
+        if not passages:
+            return email
+        for passage in passages:
+            validate_untrusted_content(passage.text)
+        return replace(
+            email,
+            web_passages=tuple(
+                WebPassage(item.source_id, item.text, item.provenance) for item in passages
             ),
         )
 
@@ -120,6 +160,7 @@ class EmailProcessingService:
                             raise WorkflowError("DEPENDENCY_TIMEOUT", retryable=True, status=503)
                         email = self.attachments.enrich(email, min(25, remaining))
                     email = self._apply_rag(email, job.id, deadline)
+                    email = self._apply_web(email, job.id, deadline)
                     remaining = deadline - time.monotonic() - 45
                     if remaining <= 0:
                         raise WorkflowError("DEPENDENCY_TIMEOUT", retryable=True, status=503)
@@ -135,6 +176,7 @@ class EmailProcessingService:
                     if remaining > 0:
                         email = self.attachments.enrich(email, min(25, remaining))
                 email = self._apply_rag(email, job.id, deadline, entry)
+                email = self._apply_web(email, job.id, deadline)
                 self.replies.validate_stored(job, email, entry)
             if not send_enabled:
                 self.repository.prepare(job, entry)

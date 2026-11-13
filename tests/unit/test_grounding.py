@@ -11,6 +11,7 @@ from reply_mcfly.domain.email import (
     MessageMetadata,
     ReplyDraft,
     Status,
+    WebPassage,
     WorkflowError,
 )
 from reply_mcfly.domain.grounding import LiteralReplyValidator, render_verified_reply
@@ -92,6 +93,29 @@ def test_nonexistent_source_and_fabricated_quote_are_rejected(email: IncomingEma
     draft.proposed_reply = render_verified_reply(draft.evidence)
     with pytest.raises(WorkflowError, match="INVALID_EVIDENCE"):
         LiteralReplyValidator().validate(email, draft)
+
+
+def test_web_evidence_validates_against_web_passages(email: IncomingEmail) -> None:
+    fact = "Aktuální testovací kurz je 24,80 Kč za euro."
+    url = "https://synthetic.invalid/kurz"
+    enriched = IncomingEmail(
+        email.metadata,
+        email.sender,
+        email.subject,
+        email.message_id_header,
+        email.references,
+        email.text,
+        web_passages=(WebPassage(f"web:{url}", fact, url),),
+    )
+    draft = ReplyDraft(
+        response_type="GENERATED",
+        proposed_reply="",
+        evidence=[Evidence(source_id=f"web:{url}", exact_quote=fact)],
+        missing_information=[],
+        requires_review=False,
+    )
+    LiteralReplyValidator().validate(enriched, draft)
+    assert "z veřejně dostupných zdrojů" in render_verified_reply(draft.evidence)
 
 
 def test_paraphrase_in_proposed_reply_does_not_block_evidence_validation(

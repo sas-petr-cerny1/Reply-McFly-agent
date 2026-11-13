@@ -64,6 +64,8 @@ class Settings(BaseSettings):
     # Replies to one sender per 24 hours before further mail goes to manual review.
     sender_daily_reply_limit: int = Field(default=20, ge=1)
     enable_rag: bool = False
+    enable_web_search: bool = False
+    web_search_timeout_seconds: float = Field(default=15.0, ge=4, le=30)
     rag_backend: Literal["markdown", "pgvector"] = "markdown"
     rag_embedding_model: str = Field(default="gemini-embedding-001", min_length=1)
     rag_embedding_dims: int = 768

@@ -7,9 +7,9 @@ Secret Manager, calls Cloud Tasks, Cloud SQL, or the Gmail API.
 ``synthetic_ms`` is time spent inside this process. It is not a Cloud Run measurement
 and does not show that the 120 second latency target is met.
 
-Live web search is not a dependency of ``EmailProcessingService``. The scenarios that
-mention it prove the worker neither calls a search provider nor accepts invented web
-facts. They do not prove a live search integration.
+With ``MCFLY_ENABLE_WEB_SEARCH`` off (default), scenarios prove the worker does not call a
+search provider and rejects invented ``web:`` evidence. Scenarios marked ``web-on`` inject
+``SyntheticWebSearch`` and prove grounding over supplied public passages.
 """
 
 from __future__ import annotations
@@ -69,6 +69,7 @@ from reply_mcfly.application.gmail_sync_service import GmailSyncService
 from reply_mcfly.application.product_catalog import load_catalog
 from reply_mcfly.application.rag_query import build_product_question, build_rag_retrieval_query
 from reply_mcfly.application.reply_service import FallbackTemplates, ReplyService
+from reply_mcfly.application.web_query import build_web_public_query
 from reply_mcfly.domain.email import (
     Evidence,
     IncomingEmail,
@@ -85,7 +86,7 @@ from reply_mcfly.domain.reply_templates import (
     FALLBACK_UNSUPPORTED_ATTACHMENT,
 )
 from reply_mcfly.domain.sender_policy import parse_sender_policy
-from reply_mcfly.ports.capabilities import RAGProvider, SourcePassage
+from reply_mcfly.ports.capabilities import RAGProvider, SourcePassage, WebSearchProvider
 
 pytestmark = pytest.mark.integration
 
@@ -571,6 +572,7 @@ class DeterministicModel:
             ("thread_history", "untrusted_text"),
             ("attachment_passages", "untrusted_text"),
             ("rag_passages", "reference_text"),
+            ("web_passages", "reference_text"),
         ):
             for item in cast(list[dict[str, str]], payload[bucket]):
                 chosen = _best_lines(question, item["source_id"], item[key])
@@ -767,14 +769,21 @@ def open_world(
     rag_timeout: float = 0.0,
     daily_limit: int = 20,
     web_fails: bool = False,
+    enable_web_search: bool = False,
+    web: WebSearchProvider | None = None,
 ) -> Iterator[World]:
     monkeypatch.setenv("MCFLY_ENABLE_THREAD_HISTORY", "true")
+    if enable_web_search:
+        monkeypatch.setenv("MCFLY_ENABLE_WEB_SEARCH", "true")
     engine = make_engine(_local_database_url())
     mailbox = f"{uuid4()}@agent.invalid"
     repository = PostgresEmailRepository(engine)
     repository.initialize(mailbox, "100", datetime.now(UTC) + timedelta(days=1))
     api = SyntheticGmailApi(mailbox)
     model = DeterministicModel()
+    synthetic_web = (
+        web if isinstance(web, SyntheticWebSearch) else SyntheticWebSearch(fail=web_fails)
+    )
     _install_model(monkeypatch, model)
     queue = LocalQueue()
     gmail = GmailAdapter(lambda: api, mailbox)
@@ -795,6 +804,10 @@ def open_world(
         enable_rag=True,
         rag_query_builder=query_builder or build_rag_retrieval_query,
         rag_timeout=rag_timeout,
+        web=synthetic_web if enable_web_search else None,
+        enable_web_search=enable_web_search,
+        web_query_builder=build_web_public_query,
+        web_timeout=5.0 if enable_web_search else 0.0,
         sender_daily_reply_limit=daily_limit,
     )
     diagnostics = DiagnosticsService(PostgresAdapter(engine))
@@ -814,7 +827,7 @@ def open_world(
         mailbox,
         api,
         model,
-        SyntheticWebSearch(fail=web_fails),
+        synthetic_web,
         repository,
         queue,
         ingress,
@@ -1119,11 +1132,45 @@ def test_current_question_does_not_call_web_search(world: World) -> None:
     )
 
 
+def test_live_kurz_uses_web_when_enabled(monkeypatch: pytest.MonkeyPatch, knowledge: Path) -> None:
+    started = time.perf_counter()
+    with open_world(monkeypatch, knowledge, enable_web_search=True) as world:
+        world.api.add(
+            message_id="m-web-live",
+            thread_id="t-web-live",
+            subject="Kurz",
+            text="Jaký je aktuální kurz koruny vůči euru?",
+            minutes=1,
+        )
+        world.notify(254)
+        world.sync()
+        response = world.process_queued()[0]
+        entry = world.outbox(world.jobs()[0].id)
+        prompt = world.model.prompts[-1]
+        ok = (
+            response.status_code == 200
+            and entry is not None
+            and WEB_FACT in entry.draft_body
+            and f"web:{WEB_URL}" in {source for source, _ in entry.evidence}
+            and len(world.web.calls) == 1
+            and len(cast(list[object], prompt["web_passages"])) == 1
+        )
+        _record(
+            "web_search_live",
+            expected="GENERATED cituje kurz z web_passages",
+            actual=f"calls={world.web.calls} sources={_sources(entry)}",
+            sent=world.api.send_calls,
+            sources=_sources(entry),
+            started=started,
+            ok=bool(ok),
+        )
+
+
 def test_web_search_failure_cannot_invent_a_result(
     monkeypatch: pytest.MonkeyPatch, knowledge: Path
 ) -> None:
     started = time.perf_counter()
-    with open_world(monkeypatch, knowledge, web_fails=True) as world:
+    with open_world(monkeypatch, knowledge, web_fails=True, enable_web_search=True) as world:
         world.api.add(
             message_id="m-web-down",
             thread_id="t-web-down",
@@ -1135,29 +1182,23 @@ def test_web_search_failure_cannot_invent_a_result(
         world.sync()
         response = world.process_queued()[0]
         entry = world.outbox(world.jobs()[0].id)
-        try:
-            if world.web.calls:
-                world.web.search(world.web.calls[0])
-        except RuntimeError as error:
-            raised = str(error)
-        else:
-            raised = ""
         ok = (
             response.status_code == 200
             and entry is not None
             and entry.draft_body == FALLBACK_MISSING_INFORMATION
             and WEB_URL not in (entry.draft_body)
-            and world.web.calls == []
-            and raised == ""
+            and len(world.web.calls) == 1
         )
         _record(
             "web_search_failure",
-            expected="pipeline provider nevolá, žádný vymyšlený výsledek",
-            actual=f"calls={len(world.web.calls)} raised={raised!r}",
+            expected="provider volán, bezpečný fallback bez vymyšleného kurzu",
+            actual=(
+                f"calls={len(world.web.calls)} "
+                f"body_has_url={WEB_URL in (entry.draft_body if entry else '')}"
+            ),
             sent=world.api.send_calls,
             sources=_sources(entry),
             started=started,
-            error=raised,
             ok=ok,
         )
 

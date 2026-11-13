@@ -299,8 +299,10 @@ změně zůstává otevřeným bodem. Žádné opakované odeslání nebylo prov
 
 Conversation History a RAG jsou implementované za přepínači
 `MCFLY_ENABLE_THREAD_HISTORY=true` a `MCFLY_ENABLE_RAG=true` (výchozí stav je vypnuto).
-Live Web Search má rozhraní v `ports/capabilities.py`; jeho implementace zůstává
-navazující prací a povinnou součástí finálního PoC.
+Live Web Search je zapojený za přepínač `MCFLY_ENABLE_WEB_SEARCH=true` (výchozí vypnuto).
+Worker zavolá Vertex AI Google Search, předá `web_passages` do Gemini a `LiteralReplyValidator`
+kontroluje citace `web:` stejně jako u RAG. U smíšených dotazů s historií vlákna se web
+nepřidává — odpoví jen z e-mailu, vlákna a KB.
 Podporované přílohy se v textovém slice neinterpretují a míří k ruční kontrole.
 U zjištěného nepodporovaného MIME může následovat schválený fallback; bezpečně ověřitelný
 text může projít i bez využití takové přílohy. Detekce poškození a kontrola skutečných

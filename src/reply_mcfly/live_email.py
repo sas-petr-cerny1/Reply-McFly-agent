@@ -15,6 +15,7 @@ from reply_mcfly.adapters.google_clients import (
 )
 from reply_mcfly.adapters.postgres_adapter import PostgresEmailRepository, make_engine
 from reply_mcfly.adapters.rag_factory import build_rag
+from reply_mcfly.adapters.web_factory import build_web_search
 from reply_mcfly.application.attachment_service import AttachmentService
 from reply_mcfly.application.email_processing_service import EmailProcessingService
 from reply_mcfly.application.live_email_runner import LiveEmailRunner, validate_live_email_settings
@@ -66,6 +67,7 @@ def main() -> int:
             settings.gcp_project_id, settings.vertex_ai_location, settings.gemini_model
         )
         rag = build_rag(settings, engine)
+        web = build_web_search(settings)
         replies = ReplyService(allowed, FallbackTemplates(), LiteralReplyValidator())
         processing = EmailProcessingService(
             repository,
@@ -78,6 +80,10 @@ def main() -> int:
             enable_rag=settings.enable_rag,
             rag_query_builder=rag.query_builder,
             rag_timeout=rag.timeout,
+            web=web.provider,
+            enable_web_search=settings.enable_web_search,
+            web_query_builder=web.query_builder,
+            web_timeout=web.timeout,
             sender_daily_reply_limit=settings.sender_daily_reply_limit,
         )
         live = LiveEmailRunner(

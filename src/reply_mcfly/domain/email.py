@@ -82,6 +82,13 @@ class RagPassage:
 
 
 @dataclass(frozen=True)
+class WebPassage:
+    source_id: str
+    text: str
+    provenance: str
+
+
+@dataclass(frozen=True)
 class IncomingEmail:
     metadata: MessageMetadata
     sender: str
@@ -96,6 +103,7 @@ class IncomingEmail:
     attachment_passages: tuple[AttachmentPassage, ...] = ()
     thread_history: tuple[ThreadHistoryPassage, ...] = ()
     rag_passages: tuple[RagPassage, ...] = ()
+    web_passages: tuple[WebPassage, ...] = ()
 
 
 class Evidence(BaseModel):
