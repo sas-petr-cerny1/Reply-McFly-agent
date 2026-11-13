@@ -965,7 +965,7 @@ def test_worker_construction_respects_capability_flags(
         pubsub_service_account="push@synthetic.invalid",
     )
     with patch(
-        "reply_mcfly.api.workflow.MarkdownRAGProvider", wraps=MarkdownRAGProvider
+        "reply_mcfly.adapters.rag_factory.MarkdownRAGProvider", wraps=MarkdownRAGProvider
     ) as provider:
         services = build_services(settings, harness.engine, "worker")
         assert isinstance(services, WorkerServices)

@@ -43,3 +43,35 @@ def build_rag_retrieval_query(email: IncomingEmail) -> str:
         return ""
     combined = "\n".join(parts)
     return combined[:_MAX_QUERY_CHARS]
+
+
+_MAX_PRODUCT_QUESTION_CHARS = 600
+_SIGNATURE = re.compile(
+    r"(?im)^\s*(--\s*$|s pozdravem|s úctou|s přáním|děkuji\s*$|best regards|kind regards|"
+    r"odesláno z|sent from)"
+)
+_PERSONAL_DATA = re.compile(
+    r"\S+@\S+"  # e-mail addresses
+    r"|https?://\S+|www\.\S+"
+    r"|\+?\d[\d ()/-]{7,}\d"  # phone numbers, long order or account numbers
+)
+
+
+def sanitize_product_question(text: str) -> str:
+    """Reduce free text to a short product question that may leave for an embedding API.
+
+    Drops quoted replies, the signature block, addresses, links and long numbers. It is
+    data minimisation, not anonymisation: a name typed inside the question itself stays.
+    """
+    lines = [line for line in text.splitlines() if not line.lstrip().startswith(">")]
+    body = "\n".join(lines)
+    signature = _SIGNATURE.search(body)
+    if signature:
+        body = body[: signature.start()]
+    body = _PERSONAL_DATA.sub(" ", body)
+    return " ".join(body.split())[:_MAX_PRODUCT_QUESTION_CHARS].strip()
+
+
+def build_product_question(email: IncomingEmail) -> str:
+    """Query for the vector backend: subject and body only, never attachments or history."""
+    return sanitize_product_question(f"{email.subject}\n{email.text}")

@@ -13,8 +13,8 @@ from reply_mcfly.adapters.google_clients import (
     GmailOAuthFileFactory,
     assert_private_credentials_file,
 )
-from reply_mcfly.adapters.markdown_rag_adapter import MarkdownRAGProvider
 from reply_mcfly.adapters.postgres_adapter import PostgresEmailRepository, make_engine
+from reply_mcfly.adapters.rag_factory import build_rag
 from reply_mcfly.application.attachment_service import AttachmentService
 from reply_mcfly.application.email_processing_service import EmailProcessingService
 from reply_mcfly.application.live_email_runner import LiveEmailRunner, validate_live_email_settings
@@ -65,7 +65,7 @@ def main() -> int:
         gemini = GeminiAdapter(
             settings.gcp_project_id, settings.vertex_ai_location, settings.gemini_model
         )
-        rag = MarkdownRAGProvider() if settings.enable_rag else None
+        rag = build_rag(settings, engine)
         replies = ReplyService(allowed, FallbackTemplates(), LiteralReplyValidator())
         processing = EmailProcessingService(
             repository,
@@ -74,8 +74,10 @@ def main() -> int:
             mailbox,
             replies,
             AttachmentService(gemini),
-            rag=rag,
+            rag=rag.provider,
             enable_rag=settings.enable_rag,
+            rag_query_builder=rag.query_builder,
+            rag_timeout=rag.timeout,
         )
         live = LiveEmailRunner(repository, gmail, processing, mailbox)
         result = live.run(args.message_id, send_enabled=args.send)

@@ -1,4 +1,5 @@
 import time
+from collections.abc import Callable
 from dataclasses import replace
 from datetime import UTC, datetime
 from uuid import UUID, uuid4
@@ -11,13 +12,14 @@ from reply_mcfly.domain.email import (
     TERMINAL,
     FallbackReason,
     IncomingEmail,
+    OutboxEntry,
     RagPassage,
     Status,
     WorkflowError,
     require_mailbox,
     validate_untrusted_content,
 )
-from reply_mcfly.ports.capabilities import RAGProvider
+from reply_mcfly.ports.capabilities import RAGProvider, SourceLookup, SourcePassage
 from reply_mcfly.ports.email import AttachmentEnricher, EmailRepository, GmailPort, WorkflowRunner
 
 
@@ -33,16 +35,33 @@ class EmailProcessingService:
         *,
         rag: RAGProvider | None = None,
         enable_rag: bool = False,
+        rag_query_builder: Callable[[IncomingEmail], str] = build_rag_retrieval_query,
+        rag_timeout: float = 0.0,
     ) -> None:
+        self._rag_query_builder, self._rag_timeout = rag_query_builder, rag_timeout
         self.repository, self.gmail, self.runner = repository, gmail, runner
         self.mailbox_id, self.replies = mailbox_id, replies
         self.attachments = attachments or UnconfiguredAttachmentService()
         self._rag = rag if enable_rag else None
 
-    def _apply_rag(self, email: IncomingEmail) -> IncomingEmail:
+    def _apply_rag(
+        self, email: IncomingEmail, job_id: UUID, deadline: float, entry: OutboxEntry | None = None
+    ) -> IncomingEmail:
         if self._rag is None:
             return email
-        passages = self._rag.retrieve(build_rag_retrieval_query(email))
+        passages: tuple[SourcePassage, ...]
+        if entry is not None and isinstance(self._rag, SourceLookup):
+            # A stored reply is checked against the exact passage versions it cites. A
+            # document changed since then is not found, so validation sends it to review.
+            passages = self._rag.lookup(
+                tuple(source for source, _ in entry.evidence if source.startswith("rag:"))
+            )
+        else:
+            # Leave room for generation and send; never start a call the deadline cannot fit.
+            if self._rag_timeout and deadline - time.monotonic() - 45 < self._rag_timeout:
+                raise WorkflowError("DEPENDENCY_TIMEOUT", retryable=True, status=503)
+            passages = self._rag.retrieve(self._rag_query_builder(email))
+        emit("rag_context_attached", job_id=str(job_id), rag_hit_count=len(passages))
         if not passages:
             return email
         for passage in passages:
@@ -90,7 +109,7 @@ class EmailProcessingService:
                         if remaining <= 0:
                             raise WorkflowError("DEPENDENCY_TIMEOUT", retryable=True, status=503)
                         email = self.attachments.enrich(email, min(25, remaining))
-                    email = self._apply_rag(email)
+                    email = self._apply_rag(email, job.id, deadline)
                     remaining = deadline - time.monotonic() - 45
                     if remaining <= 0:
                         raise WorkflowError("DEPENDENCY_TIMEOUT", retryable=True, status=503)
@@ -101,7 +120,7 @@ class EmailProcessingService:
                     remaining = deadline - time.monotonic() - 55
                     if remaining > 0:
                         email = self.attachments.enrich(email, min(25, remaining))
-                email = self._apply_rag(email)
+                email = self._apply_rag(email, job.id, deadline, entry)
                 self.replies.validate_stored(job, email, entry)
             if not send_enabled:
                 self.repository.prepare(job, entry)
