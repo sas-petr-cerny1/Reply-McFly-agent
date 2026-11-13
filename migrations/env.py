@@ -11,7 +11,8 @@ def run_migrations() -> None:
         with context.begin_transaction():
             context.run_migrations()
     else:
-        engine = make_engine(database_url)
+        # DDL on a populated table can outlast the 3 s limit meant for request queries.
+        engine = make_engine(database_url, statement_timeout_ms=None)
         try:
             with engine.connect() as connection:
                 context.configure(connection=connection, target_metadata=Base.metadata)

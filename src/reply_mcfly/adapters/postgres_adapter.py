@@ -50,7 +50,16 @@ class MailboxSyncState(Base):
     )
 
 
-def make_engine(database_url: str) -> Engine:
+REQUEST_STATEMENT_TIMEOUT_MS = 3000
+
+
+def make_engine(
+    database_url: str, *, statement_timeout_ms: int | None = REQUEST_STATEMENT_TIMEOUT_MS
+) -> Engine:
+    """Engine for request handling; pass ``statement_timeout_ms=None`` for schema migrations."""
+    connect_args: dict[str, object] = {"connect_timeout": 3}
+    if statement_timeout_ms is not None:
+        connect_args["options"] = f"-c statement_timeout={statement_timeout_ms}"
     return create_engine(
         database_url,
         pool_pre_ping=True,
@@ -58,7 +67,7 @@ def make_engine(database_url: str) -> Engine:
         max_overflow=0,
         pool_timeout=5,
         hide_parameters=True,
-        connect_args={"connect_timeout": 3, "options": "-c statement_timeout=3000"},
+        connect_args=connect_args,
     )
 
 
