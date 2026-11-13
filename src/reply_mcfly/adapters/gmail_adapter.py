@@ -62,6 +62,7 @@ AddedMessage.model_rebuild()
 
 
 class HistoryRecord(BaseModel):
+    id: str | None = Field(default=None, pattern=r"^\d+$")
     messagesAdded: list[AddedMessage] = Field(default_factory=list)
 
 
@@ -303,6 +304,8 @@ class GmailAdapter:
                         )
                     ),
                     page.historyId,
+                    # Only a full page proves that every record up to its last id was listed.
+                    page.history[-1].id if page.history else None,
                 )
                 token = page.nextPageToken
                 if not token:

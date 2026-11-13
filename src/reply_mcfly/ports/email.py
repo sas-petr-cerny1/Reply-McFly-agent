@@ -17,7 +17,10 @@ from reply_mcfly.domain.email import (
 @dataclass(frozen=True)
 class HistoryPage:
     message_ids: tuple[str, ...]
+    # Mailbox-wide current history id; a safe checkpoint only after the last page.
     history_id: str
+    # Id of the last history record on this page; a safe checkpoint once the page is enqueued.
+    resume_history_id: str | None = None
 
 
 class GmailPort(Protocol):
