@@ -33,6 +33,9 @@ def _factual_attachment_lines(text: str) -> str:
 
 def build_rag_retrieval_query(email: IncomingEmail) -> str:
     parts: list[str] = []
+    # The subject often names the product or problem that the body only refers to.
+    if email.subject.strip():
+        parts.append(email.subject.strip())
     if email.text.strip():
         parts.append(email.text.strip())
     for passage in email.attachment_passages:

@@ -180,6 +180,7 @@ def validate_recipient(job: Job, email: IncomingEmail, policy: SenderPolicy) -> 
             raise WorkflowError("INVALID_REPLY_HEADERS")
     if not re.fullmatch(r"<[^<>\s]+@[^<>\s]+>", email.message_id_header):
         raise WorkflowError("INVALID_MESSAGE_ID")
+    validate_untrusted_content(email.subject)
     validate_untrusted_content(email.text)
 
 
