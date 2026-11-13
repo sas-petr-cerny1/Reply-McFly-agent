@@ -98,7 +98,7 @@ def build_services(
     verifier = GoogleOidcVerifier(settings.worker_url.rstrip("/"), settings.tasks_service_account)
     return WorkerServices(
         mailbox,
-        GmailSyncService(repository, gmail, queue),
+        GmailSyncService(repository, gmail, queue, maintenance=gmail),
         EmailProcessingService(
             repository,
             gmail,
