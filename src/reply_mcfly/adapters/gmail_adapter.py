@@ -330,9 +330,6 @@ class GmailAdapter:
             except ValidationError:
                 raise WorkflowError("INVALID_GMAIL_WATCH") from None
 
-    def renew_watch(self, topic: str) -> datetime:
-        return datetime.fromtimestamp(int(self.watch(topic).expiration) / 1000, UTC)
-
     def unread_inbox(self) -> tuple[str, ...]:
         """Newest unread inbox messages; the recovery listing after an expired history id."""
         with self._service() as service:

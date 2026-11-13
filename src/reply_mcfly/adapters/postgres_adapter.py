@@ -171,11 +171,6 @@ class PostgresEmailRepository:
             if expiration is not None:
                 row.watch_expiration = expiration
 
-    def watch_expiration(self, mailbox_id: str) -> datetime | None:
-        with Session(self.engine) as session:
-            row = session.get(MailboxSyncState, mailbox_id)
-            return row.watch_expiration if row else None
-
     def acquire_sync(self, mailbox_id: str, token: UUID) -> str:
         with Session(self.engine) as session, session.begin():
             row = session.get(MailboxSyncState, mailbox_id, with_for_update=True)
