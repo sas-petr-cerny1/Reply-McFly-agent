@@ -342,6 +342,19 @@ class PostgresEmailRepository:
             entry.sent_at = datetime.now(UTC)
         emit("delivery_confirmed", job_id=str(job.id), status=Status.SENT.value)
 
+    def sent_reply_count(self, mailbox_id: str, recipient: str, window: timedelta) -> int:
+        with Session(self.engine) as session:
+            return session.execute(
+                select(func.count())
+                .select_from(EmailOutboxModel)
+                .join(EmailJobModel, EmailJobModel.id == EmailOutboxModel.job_id)
+                .where(
+                    EmailJobModel.mailbox_id == mailbox_id,
+                    EmailOutboxModel.recipient == recipient,
+                    EmailOutboxModel.sent_at > func.now() - window,
+                )
+            ).scalar_one()
+
     def release_lease(self, job: Job) -> None:
         with Session(self.engine) as session, session.begin():
             row = session.get(EmailJobModel, job.id, with_for_update=True)

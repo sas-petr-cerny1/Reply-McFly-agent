@@ -95,8 +95,9 @@ Změna hesla v `.env` nemění heslo již inicializované databáze.
 - Příjemce je původní From z allowlistu (`MCFLY_ALLOWED_SENDERS`) nebo z libovolného
   platného externího odesílatele v režimu `["*"]` (wildcard musí být jediná položka).
   Reply-To se ignoruje. Samotný From není ověření identity. Schránka asistenta, automatické
-  odpovědi a typické bounce/no-reply odesílatele se neodesílají. Per-sender rate limit zatím
-  není implementovaný; nad stávající tabulkou `email_jobs` lze doplnit jednoduchý denní strop.
+  odpovědi a typické bounce/no-reply odesílatele se neodesílají. Jednomu odesílateli odejde
+  nejvýše `MCFLY_SENDER_DAILY_REPLY_LIMIT` odpovědí za 24 hodin (výchozí 20); další zprávy
+  končí v REVIEW_REQUIRED s kódem `SENDER_REPLY_LIMIT_REACHED`.
 - Schválené fallback texty jsou v `domain/reply_templates.py` a kontrolují je golden testy.
   LLM je nepřepisuje; outbox uchovává `response_type`, `fallback_reason` a důkazy.
 - Neověřitelný výstup či bezpečnostní riziko vede do REVIEW_REQUIRED bez sendu.

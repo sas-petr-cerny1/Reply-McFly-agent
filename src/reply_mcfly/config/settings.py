@@ -52,6 +52,8 @@ class Settings(BaseSettings):
     tasks_service_account: str = ""
     gmail_topic: str = "projects/reply-mcfly-poc/topics/gmail-events"
     enable_rag: bool = False
+    # Replies to one sender per 24 hours before further mail goes to manual review.
+    sender_daily_reply_limit: int = Field(default=20, ge=1)
 
     def sqlalchemy_url(self) -> str:
         if self.database_url is None:

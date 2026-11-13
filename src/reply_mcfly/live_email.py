@@ -76,6 +76,7 @@ def main() -> int:
             AttachmentService(gemini),
             rag=rag,
             enable_rag=settings.enable_rag,
+            sender_daily_reply_limit=settings.sender_daily_reply_limit,
         )
         live = LiveEmailRunner(repository, gmail, processing, mailbox)
         result = live.run(args.message_id, send_enabled=args.send)

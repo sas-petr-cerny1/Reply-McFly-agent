@@ -108,6 +108,7 @@ def build_services(
             AttachmentService(gemini),
             rag=rag,
             enable_rag=settings.enable_rag,
+            sender_daily_reply_limit=settings.sender_daily_reply_limit,
         ),
         verifier,
     )
