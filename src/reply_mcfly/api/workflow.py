@@ -23,6 +23,7 @@ from reply_mcfly.application.attachment_service import AttachmentService
 from reply_mcfly.application.email_processing_service import EmailProcessingService
 from reply_mcfly.application.gmail_sync_service import GmailSyncService
 from reply_mcfly.application.reply_service import FallbackTemplates, ReplyService
+from reply_mcfly.application.telemetry import emit
 from reply_mcfly.config.settings import Settings
 from reply_mcfly.domain.email import Status, WorkflowError, require_mailbox
 from reply_mcfly.domain.grounding import LiteralReplyValidator
@@ -163,6 +164,15 @@ def install_workflow_routes(
 ) -> None:
     @app.exception_handler(WorkflowError)
     async def workflow_error(request: Request, error: WorkflowError) -> JSONResponse:
+        # The same id goes to the caller and to the log, so a reported failure can be found.
+        correlation_id = str(uuid4())
+        emit(
+            "request_failed",
+            status=str(error.status),
+            error_code=error.code,
+            correlation_id=correlation_id,
+            path=request.url.path,
+        )
         return JSONResponse(
             status_code=error.status,
             content={
@@ -170,7 +180,7 @@ def install_workflow_routes(
                     "code": error.code,
                     "message": "Request could not be completed",
                     "retryable": error.retryable,
-                    "correlation_id": str(uuid4()),
+                    "correlation_id": correlation_id,
                 }
             },
         )

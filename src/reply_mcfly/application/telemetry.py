@@ -38,12 +38,14 @@ def emit(
     rag_error_code: str | None = None,
     embedding_model: str | None = None,
     document_version: str | None = None,
+    correlation_id: str | None = None,
+    path: str | None = None,
 ) -> None:
     payload: dict[str, object] = {
         "timestamp": datetime.now(UTC).isoformat(),
         "event": event,
         "job_id": job_id,
-        "correlation_id": job_id,
+        "correlation_id": correlation_id or job_id,
         "status": status,
         "error_code": error_code,
         "duration_seconds": duration_seconds,
@@ -73,6 +75,7 @@ def emit(
         ("rag_error_code", rag_error_code),
         ("embedding_model", embedding_model),
         ("document_version", document_version),
+        ("path", path),
     ):
         if value is not None:
             payload[key] = value
