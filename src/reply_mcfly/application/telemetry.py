@@ -31,6 +31,13 @@ def emit(
     total_token_count: int | None = None,
     validation_fields: list[str] | None = None,
     attempt: int | None = None,
+    embedding_latency_ms: int | None = None,
+    vector_query_latency_ms: int | None = None,
+    rag_total_latency_ms: int | None = None,
+    rag_hit_count: int | None = None,
+    rag_error_code: str | None = None,
+    embedding_model: str | None = None,
+    document_version: str | None = None,
 ) -> None:
     payload: dict[str, object] = {
         "timestamp": datetime.now(UTC).isoformat(),
@@ -59,6 +66,13 @@ def emit(
         ("total_token_count", total_token_count),
         ("validation_fields", validation_fields),
         ("attempt", attempt),
+        ("embedding_latency_ms", embedding_latency_ms),
+        ("vector_query_latency_ms", vector_query_latency_ms),
+        ("rag_total_latency_ms", rag_total_latency_ms),
+        ("rag_hit_count", rag_hit_count),
+        ("rag_error_code", rag_error_code),
+        ("embedding_model", embedding_model),
+        ("document_version", document_version),
     ):
         if value is not None:
             payload[key] = value

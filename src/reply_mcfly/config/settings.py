@@ -1,3 +1,5 @@
+from typing import Literal
+
 from pydantic import Field, PostgresDsn, SecretStr, field_validator
 from pydantic_settings import BaseSettings, SettingsConfigDict
 
@@ -7,6 +9,9 @@ from reply_mcfly.domain.sender_policy import (
     SenderPolicy,
     parse_sender_policy,
 )
+
+# Fixed by the database column type; changing it needs a migration and a full reindex.
+RAG_VECTOR_DIMENSIONS = 768
 
 
 class Settings(BaseSettings):
@@ -52,6 +57,23 @@ class Settings(BaseSettings):
     tasks_service_account: str = ""
     gmail_topic: str = "projects/reply-mcfly-poc/topics/gmail-events"
     enable_rag: bool = False
+    rag_backend: Literal["markdown", "pgvector"] = "markdown"
+    rag_embedding_model: str = Field(default="gemini-embedding-001", min_length=1)
+    rag_embedding_dims: int = 768
+    # Empty means GCP_REGION; the embedding model must be available in this location.
+    rag_embedding_location: str = ""
+    rag_top_k: int = Field(default=3, ge=1, le=3)
+    rag_timeout_seconds: float = Field(default=10.0, ge=4, le=30)
+
+    @field_validator("rag_embedding_dims")
+    @classmethod
+    def validate_rag_embedding_dims(cls, value: int) -> int:
+        if value != RAG_VECTOR_DIMENSIONS:
+            raise ValueError(
+                f"MCFLY_RAG_EMBEDDING_DIMS must be {RAG_VECTOR_DIMENSIONS}: "
+                "the rag_product_chunks.embedding column is vector(768)"
+            )
+        return value
 
     def sqlalchemy_url(self) -> str:
         if self.database_url is None:

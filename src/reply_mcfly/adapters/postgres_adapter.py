@@ -15,8 +15,10 @@ from sqlalchemy import (
     text,
 )
 from sqlalchemy.dialects.postgresql import JSONB, insert
+from sqlalchemy.dialects.postgresql.base import ischema_names
 from sqlalchemy.engine import Engine
 from sqlalchemy.orm import DeclarativeBase, Mapped, Session, mapped_column
+from sqlalchemy.types import UserDefinedType
 
 from reply_mcfly.application.telemetry import emit
 from reply_mcfly.domain.email import (
@@ -135,6 +137,46 @@ class EmailOutboxModel(Base):
     status: Mapped[str] = mapped_column(String(32))
     gmail_sent_message_id: Mapped[str | None] = mapped_column(String(255))
     sent_at: Mapped[datetime | None] = mapped_column(DateTime(timezone=True))
+
+
+EMBEDDING_DIMENSIONS = 768
+
+
+class Vector(UserDefinedType[str]):
+    """pgvector column type; values travel as the textual ``[1,2,3]`` literal."""
+
+    cache_ok = True
+
+    def __init__(self, dimensions: int | None = None) -> None:
+        self.dimensions = dimensions
+
+    def get_col_spec(self, **kw: object) -> str:
+        return "vector" if self.dimensions is None else f"vector({self.dimensions})"
+
+
+# Lets schema reflection (alembic check) recognize the column instead of warning.
+ischema_names["vector"] = Vector
+
+
+class RagProductChunkModel(Base):
+    """Approved product knowledge only; never customer mail or thread history."""
+
+    __tablename__ = "rag_product_chunks"
+    __table_args__ = (UniqueConstraint("source_id", name="uq_rag_product_chunks_source_id"),)
+    chunk_id: Mapped[str] = mapped_column(String(255), primary_key=True)
+    document_id: Mapped[str] = mapped_column(String(255))
+    product_id: Mapped[str] = mapped_column(String(64), index=True)
+    product_name: Mapped[str] = mapped_column(String(255))
+    section_name: Mapped[str] = mapped_column(String(255))
+    document_version: Mapped[str] = mapped_column(String(64))
+    language: Mapped[str] = mapped_column(String(8))
+    content: Mapped[str] = mapped_column(Text)
+    content_sha256: Mapped[str] = mapped_column(String(64))
+    source_id: Mapped[str] = mapped_column(String(512))
+    provenance: Mapped[str] = mapped_column(String(512))
+    embedding_model: Mapped[str] = mapped_column(String(128))
+    embedding: Mapped[str] = mapped_column(Vector(EMBEDDING_DIMENSIONS))
+    updated_at: Mapped[datetime] = mapped_column(DateTime(timezone=True), server_default=func.now())
 
 
 def _job(row: EmailJobModel) -> Job:

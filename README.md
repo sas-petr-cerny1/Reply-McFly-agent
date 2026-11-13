@@ -289,6 +289,25 @@ U zjištěného nepodporovaného MIME může následovat schválený fallback; b
 text může projít i bez využití takové přílohy. Detekce poškození a kontrola skutečných
 signatur souborů bude součástí samostatného attachment inkrementu.
 
+## Vektorový RAG nad pgvector (produktový katalog)
+
+Vedle lokálního Markdown RAG (KB01–KB03, výchozí) umí Worker číst produktové znalosti
+z PostgreSQL + pgvector. Přepíná se jen konfigurací:
+`MCFLY_ENABLE_RAG=true MCFLY_RAG_BACKEND=pgvector`. Katalog tří fiktivních produktů je
+v `src/reply_mcfly/product_catalog/` (18 sekčních chunků), odděleně od `knowledge_base/`.
+Migrace 0004 přidává tabulku `rag_product_chunks`; tabulky e-mailového workflow nemění.
+
+```sh
+python -m reply_mcfly.rag validate                 # offline kontrola katalogu
+python -m reply_mcfly.rag sync                     # dry-run: co by se změnilo
+python -m reply_mcfly.rag sync --apply             # embeddingy přes Vertex AI + zápis
+python -m reply_mcfly.rag search --query "Kolik stojí AirDock 8?"
+```
+
+Postup nasazení, ověření, chybové stavy a návrat k Markdown režimu popisuje
+[`RUNBOOK_RAG_PGVECTOR.md`](RUNBOOK_RAG_PGVECTOR.md). Živé Vertex AI embeddingy, Cloud SQL
+a Gmail E2E s tímto backendem zatím **nebyly ověřeny**; lokální testy používají řízený fake.
+
 ## Historické lokální výsledky před rekonstrukcí Git historie
 
 11. 11. 2026, Docker Desktop / Linux ARM64, Python 3.12.16:
