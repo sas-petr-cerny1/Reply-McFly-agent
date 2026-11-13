@@ -34,7 +34,10 @@ _MIN_KEYWORD_OVERLAP = 2
 _STEM_LENGTH = 5
 _MODEL_TOKEN = re.compile(r"[a-z]?\d+[a-z]?")
 _BRANDED_NAME = re.compile(r"\bMcFly\s+([A-Z][\w-]+)")
-_GENERIC_WORDS = frozenset({"mcfly", "produkt", "produktu", "nazev", "fiktivni"})
+# Words that say nothing about which product or feature a question is about.
+_GENERIC_WORDS = frozenset(
+    {"mcfly", "produkt", "produktu", "nazev", "fiktivni", "lze", "nelze", "mozne", "funguje"}
+)
 
 _PRODUCTS = text(
     "SELECT DISTINCT product_id, product_name FROM rag_product_chunks "

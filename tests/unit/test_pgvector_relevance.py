@@ -261,3 +261,52 @@ def test_retrieval_is_not_started_when_the_deadline_cannot_fit_it() -> None:
 
     assert error.value.retryable is True
     provider.retrieve.assert_not_called()
+
+
+@pytest.mark.parametrize(
+    "question",
+    [
+        "Kde je moje objednávka?",
+        "Kdy mi dorazí balík?",
+        "Chci vrátit peníze za objednávku.",
+        "Dobrý den, potřebuji fakturu k nákupu z minulého týdne.",
+        "Můžete mi poslat sledovací číslo zásilky?",
+        "Kolik stojí doprava do Brna?",
+        "Jak dlouhá je záruka na zboží?",
+        "Nefunguje mi přihlášení do účtu, zapomněl jsem heslo.",
+        "Chci reklamovat poškozenou zásilku, krabice byla promáčknutá.",
+        "Děkuji za rychlou odpověď, hezký den.",
+        "Jaká je aktuální sleva na sluchátka?",
+        "Kolik stojí iPhone 15?",
+        "Jaký notebook doporučujete pro studenta?",
+        "Prodáváte televize s HDMI?",
+    ],
+)
+def test_customer_service_questions_outside_the_catalog_get_no_passage(question: str) -> None:
+    rows = _rows()
+
+    assert identify_products(question, PRODUCTS) == ((), False)
+    # Independent of how the embedding model happens to rank the chunks.
+    assert _select(rows, (), question, 3) == []
+    assert _select(rows[::-1], (), question, 3) == []
+
+
+@pytest.mark.parametrize(
+    ("question", "product_id"),
+    [
+        ("Jaká sluchátka mají potlačení hluku?", "MF-AUDIO-02"),
+        ("Jak dlouho vydrží baterie sluchátek se zapnutým ANC?", "MF-AUDIO-02"),
+        ("Hledám senzor na teplotu a vlhkost do bytu", "MF-SENSOR-03"),
+        ("Funguje senzor na Wi-Fi 5 GHz?", "MF-SENSOR-03"),
+        ("Potřebuji dokovací stanici k notebooku s HDMI a Ethernetem", "MF-DOCK-08"),
+        ("Kolik monitorů lze připojit k dokovací stanici?", "MF-DOCK-08"),
+    ],
+)
+def test_paraphrase_without_a_product_name_can_only_reach_the_right_product(
+    question: str, product_id: str
+) -> None:
+    rows = _rows()
+
+    for ranked in (rows, rows[::-1]):
+        selected = _select(ranked, (), question, 3)
+        assert selected and {row["product_id"] for row in selected} == {product_id}
