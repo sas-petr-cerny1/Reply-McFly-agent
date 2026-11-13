@@ -208,8 +208,9 @@ def test_sent_lookup_confirms_only_matching_outbox_content(same_body: bool) -> N
     service.users.return_value.getProfile.return_value.execute.return_value = {
         "emailAddress": job.mailbox_id
     }
-    service.users.return_value.messages.return_value.list.return_value.execute.return_value = {
-        "messages": [{"id": "c1"}]
+    service.users.return_value.threads.return_value.get.return_value.execute.return_value = {
+        "id": "b1",
+        "messages": [{"id": "c1", "threadId": "b1", "labelIds": ["SENT"]}],
     }
     service.users.return_value.messages.return_value.get.return_value.execute.return_value = {
         "id": "c1",
