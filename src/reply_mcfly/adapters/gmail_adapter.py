@@ -102,6 +102,8 @@ class _ReadableHTML(HTMLParser):
 # Keep bounded limits at both encoding layers; attachment validation remains separate.
 MAX_GMAIL_RAW_CHARS = 16 * 1024 * 1024
 MAX_GMAIL_DECODED_BYTES = 12 * 1024 * 1024
+JOB_HEADER = "X-Reply-McFly-Job"
+MAX_RECONCILED_THREAD_MESSAGES = 100
 
 
 def decode_mime(payload: GmailMessagePayload) -> EmailMessage:
@@ -210,6 +212,11 @@ def parse_message(payload: GmailMessagePayload) -> IncomingEmail:
     )
 
 
+def _comparable_body(text: str) -> str:
+    # SMTP serialization turns "\n" into CRLF; compare content, not transport line endings.
+    return text.replace("\r\n", "\n").strip()
+
+
 def encode_reply(job: Job, entry: OutboxEntry) -> str:
     message = EmailMessage()
     message["From"] = job.mailbox_id
@@ -220,6 +227,8 @@ def encode_reply(job: Job, entry: OutboxEntry) -> str:
     message["References"] = entry.references
     message["Auto-Submitted"] = "auto-replied"
     message["X-Auto-Response-Suppress"] = "All"
+    # Gmail may rewrite Message-ID on send; this survives and identifies the reply later.
+    message[JOB_HEADER] = str(job.id)
     message.set_content(entry.draft_body)
     return base64.urlsafe_b64encode(message.as_bytes(policy=policy.SMTP)).decode("ascii")
 
@@ -424,38 +433,54 @@ class GmailAdapter:
         return sent_id
 
     def find_sent(self, job: Job, entry: OutboxEntry) -> str | None:
+        """Find the reply of an uncertain send by reading its own Gmail thread.
+
+        A search by RFC Message-ID is not enough: Gmail can replace the Message-ID of a
+        sent message and search is eventually consistent. The thread is read directly and
+        the reply is recognized by its job header (or the original Message-ID) plus the
+        exact recipient, reply headers, subject and body of the stored outbox entry.
+        """
         with self._service() as service:
-            result = self._execute(
-                service.users()
-                .messages()
-                .list(
-                    userId="me", q=f"in:sent rfc822msgid:{entry.outbound_message_id}", maxResults=10
-                )
+            thread = self._execute(
+                service.users().threads().get(userId="me", id=job.gmail_thread_id, format="minimal")
             )
-            if not isinstance(result, dict) or result.get("nextPageToken"):
-                raise WorkflowError("AMBIGUOUS_SENT_RESULT")
-            candidates = result.get("messages", [])
-            if not isinstance(candidates, list):
-                raise WorkflowError("INVALID_GMAIL_RESPONSE")
-            matches: list[str] = []
-            for candidate in candidates:
-                identifier = GmailMessageId.model_validate(candidate).id
-                payload = self._get(identifier, "raw")
-                message = decode_mime(payload)
-                body = message.get_body(preferencelist=("plain",))
-                text = _body_text(body)
-                if (
-                    payload.threadId == job.gmail_thread_id
-                    and "SENT" in payload.labelIds
-                    and str(message.get("Message-ID")) == entry.outbound_message_id
-                    and single_address(message, "From") == job.mailbox_id.casefold()
-                    and single_address(message, "To") == entry.recipient.casefold()
-                    and str(message.get("In-Reply-To")) == entry.in_reply_to
-                    and str(message.get("Subject", "")) == entry.subject
-                    and isinstance(text, str)
-                    and text.strip() == entry.draft_body.strip()
-                ):
-                    matches.append(identifier)
-            if len(matches) > 1:
-                raise WorkflowError("AMBIGUOUS_SENT_RESULT")
-            return matches[0] if matches else None
+        if not isinstance(thread, dict) or thread.get("id") != job.gmail_thread_id:
+            raise WorkflowError("AMBIGUOUS_SENT_RESULT")
+        items = thread.get("messages", [])
+        if not isinstance(items, list) or len(items) > MAX_RECONCILED_THREAD_MESSAGES:
+            raise WorkflowError("AMBIGUOUS_SENT_RESULT")
+        matches: list[str] = []
+        for item in items:
+            if not isinstance(item, dict) or "SENT" not in item.get("labelIds", []):
+                continue
+            try:
+                identifier = GmailMessageId.model_validate({"id": item.get("id")}).id
+            except ValidationError:
+                raise WorkflowError("INVALID_GMAIL_RESPONSE") from None
+            payload = self._get(identifier, "raw")
+            if self._is_reply(payload, job, entry):
+                matches.append(identifier)
+        if len(matches) > 1:
+            raise WorkflowError("AMBIGUOUS_SENT_RESULT")
+        return matches[0] if matches else None
+
+    def _is_reply(self, payload: GmailMessagePayload, job: Job, entry: OutboxEntry) -> bool:
+        try:
+            message = decode_mime(payload)
+            return (
+                payload.threadId == job.gmail_thread_id
+                and "SENT" in payload.labelIds
+                and (
+                    str(message.get(JOB_HEADER, "")).strip() == str(job.id)
+                    or str(message.get("Message-ID")) == entry.outbound_message_id
+                )
+                and single_address(message, "From") == job.mailbox_id.casefold()
+                and single_address(message, "To") == entry.recipient.casefold()
+                and str(message.get("In-Reply-To")) == entry.in_reply_to
+                and str(message.get("Subject", "")) == entry.subject
+                and _comparable_body(_body_text(message.get_body(preferencelist=("plain",))))
+                == _comparable_body(entry.draft_body)
+            )
+        except WorkflowError:
+            # Some other message sent in this thread that cannot be parsed is not our reply.
+            return False
