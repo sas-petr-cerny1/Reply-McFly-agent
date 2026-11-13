@@ -31,12 +31,14 @@ def emit(
     total_token_count: int | None = None,
     validation_fields: list[str] | None = None,
     attempt: int | None = None,
+    correlation_id: str | None = None,
+    path: str | None = None,
 ) -> None:
     payload: dict[str, object] = {
         "timestamp": datetime.now(UTC).isoformat(),
         "event": event,
         "job_id": job_id,
-        "correlation_id": job_id,
+        "correlation_id": correlation_id or job_id,
         "status": status,
         "error_code": error_code,
         "duration_seconds": duration_seconds,
@@ -59,6 +61,7 @@ def emit(
         ("total_token_count", total_token_count),
         ("validation_fields", validation_fields),
         ("attempt", attempt),
+        ("path", path),
     ):
         if value is not None:
             payload[key] = value
