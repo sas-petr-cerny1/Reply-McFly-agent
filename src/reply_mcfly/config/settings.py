@@ -20,6 +20,12 @@ class Settings(BaseSettings):
     mailbox_id: str = ""
     allowed_senders: frozenset[str] = frozenset()
 
+    @field_validator("mailbox_id")
+    @classmethod
+    def normalize_mailbox_id(cls, value: str) -> str:
+        # One spelling everywhere: the value is a database key and an OIDC-checked identity.
+        return value.strip().casefold()
+
     @field_validator("allowed_senders")
     @classmethod
     def validate_allowed_senders(cls, value: frozenset[str]) -> frozenset[str]:
@@ -27,14 +33,12 @@ class Settings(BaseSettings):
             return value
         if WILDCARD_SENDER in value:
             if value != frozenset({WILDCARD_SENDER}):
-                raise ValueError(
-                    "MCFLY_ALLOWED_SENDERS allow-all mode requires exactly [\"*\"]"
-                )
+                raise ValueError('MCFLY_ALLOWED_SENDERS allow-all mode requires exactly ["*"]')
             return value
         for address in value:
             if not address.strip() or "@" not in address:
                 raise ValueError(
-                    "MCFLY_ALLOWED_SENDERS must contain valid email addresses or [\"*\"]"
+                    'MCFLY_ALLOWED_SENDERS must contain valid email addresses or ["*"]'
                 )
         return frozenset(address.casefold() for address in value)
 
@@ -43,6 +47,7 @@ class Settings(BaseSettings):
             return parse_sender_policy(self.allowed_senders, self.mailbox_id)
         except SenderConfigurationError as error:
             raise ValueError(str(error)) from error
+
     gmail_oauth_secret_version: str = ""
     sync_queue: str = ""
     process_queue: str = ""
