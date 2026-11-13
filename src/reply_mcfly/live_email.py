@@ -77,7 +77,9 @@ def main() -> int:
             rag=rag,
             enable_rag=settings.enable_rag,
         )
-        live = LiveEmailRunner(repository, gmail, processing, mailbox)
+        live = LiveEmailRunner(
+            repository, gmail, processing, mailbox, history_baseline=gmail.profile_history
+        )
         result = live.run(args.message_id, send_enabled=args.send)
     except WorkflowError as error:
         print(

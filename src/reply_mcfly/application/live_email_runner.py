@@ -1,13 +1,18 @@
 from __future__ import annotations
 
 import time
+from collections.abc import Callable
 from dataclasses import dataclass
 from uuid import UUID
 
 from reply_mcfly.application.email_processing_service import EmailProcessingService
 from reply_mcfly.application.telemetry import emit
 from reply_mcfly.domain.email import Status, WorkflowError, incoming
-from reply_mcfly.domain.sender_policy import SenderConfigurationError, SenderPolicy, parse_sender_policy
+from reply_mcfly.domain.sender_policy import (
+    SenderConfigurationError,
+    SenderPolicy,
+    parse_sender_policy,
+)
 from reply_mcfly.ports.email import EmailRepository, GmailPort
 
 
@@ -28,7 +33,10 @@ class LiveEmailRunner:
         gmail: GmailPort,
         processing: EmailProcessingService,
         mailbox_id: str,
+        *,
+        history_baseline: Callable[[], str],
     ) -> None:
+        self.history_baseline = history_baseline
         self.repository = repository
         self.gmail = gmail
         self.processing = processing
@@ -38,7 +46,9 @@ class LiveEmailRunner:
         message_id = message_id.strip()
         if not message_id or len(message_id) > 255:
             raise WorkflowError("INVALID_MESSAGE_ID")
-        self.repository.initialize(self.mailbox_id, "0", None)
+        # The first stored checkpoint is permanent, so it must be a real Gmail history id:
+        # a placeholder would make every later production sync fail with HISTORY_EXPIRED.
+        self.repository.initialize(self.mailbox_id, self.history_baseline(), None)
         emit(
             "live_email_run_started",
             gmail_message_id=message_id,
@@ -80,9 +90,7 @@ class LiveEmailRunner:
         )
 
 
-def validate_live_email_settings(
-    mailbox_id: str, allowed_senders: frozenset[str]
-) -> SenderPolicy:
+def validate_live_email_settings(mailbox_id: str, allowed_senders: frozenset[str]) -> SenderPolicy:
     if not mailbox_id or "@" not in mailbox_id:
         raise RuntimeError("Set MCFLY_MAILBOX_ID to the dedicated Gmail mailbox address")
     if not allowed_senders:
@@ -90,4 +98,6 @@ def validate_live_email_settings(
     try:
         return parse_sender_policy(allowed_senders, mailbox_id)
     except SenderConfigurationError as error:
-        raise RuntimeError("Invalid MCFLY_ALLOWED_SENDERS configuration for live email runs") from error
+        raise RuntimeError(
+            "Invalid MCFLY_ALLOWED_SENDERS configuration for live email runs"
+        ) from error

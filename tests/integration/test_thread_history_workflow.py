@@ -163,7 +163,7 @@ def thread_history_harness() -> Iterator[
         LiteralReplyValidator(),
     )
     processing = EmailProcessingService(repository, gmail, runner, mailbox, replies)
-    live = LiveEmailRunner(repository, gmail, processing, mailbox)
+    live = LiveEmailRunner(repository, gmail, processing, mailbox, history_baseline=lambda: "100")
     try:
         yield live, gmail, runner, engine
     finally:

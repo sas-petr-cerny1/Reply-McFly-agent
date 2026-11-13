@@ -4,6 +4,7 @@ from datetime import UTC, datetime, timedelta
 from uuid import uuid4
 
 import pytest
+from sqlalchemy import delete, select
 from sqlalchemy.engine import Engine
 
 from reply_mcfly.adapters.postgres_adapter import (
@@ -112,12 +113,10 @@ def runner_harness() -> Iterator[tuple[LiveEmailRunner, FakeGmail, FakeRunner, E
         LiteralReplyValidator(),
     )
     processing = EmailProcessingService(repository, gmail, runner, mailbox, replies)
-    live = LiveEmailRunner(repository, gmail, processing, mailbox)
+    live = LiveEmailRunner(repository, gmail, processing, mailbox, history_baseline=lambda: "4321")
     try:
         yield live, gmail, runner, engine, mailbox
     finally:
-        from sqlalchemy import delete, select
-
         with engine.begin() as connection:
             ids = select(EmailJobModel.id).where(EmailJobModel.mailbox_id == mailbox)
             connection.execute(delete(EmailOutboxModel).where(EmailOutboxModel.job_id.in_(ids)))
@@ -166,3 +165,21 @@ def test_live_runner_rejects_non_incoming_message(
     )
     with pytest.raises(WorkflowError, match="MESSAGE_NOT_INCOMING"):
         live.run("msg-live-1", send_enabled=False)
+
+
+def test_live_runner_keeps_existing_sync_checkpoint(
+    runner_harness: tuple[LiveEmailRunner, FakeGmail, FakeRunner, Engine, str],
+) -> None:
+    live, _, _, engine, mailbox = runner_harness
+    live.run("msg-live-1", send_enabled=False)
+    assert PostgresEmailRepository(engine).acquire_sync(mailbox, uuid4()) == "100"
+
+
+def test_live_runner_seeds_new_mailbox_with_real_history_id(
+    runner_harness: tuple[LiveEmailRunner, FakeGmail, FakeRunner, Engine, str],
+) -> None:
+    live, _, _, engine, mailbox = runner_harness
+    with engine.begin() as connection:
+        connection.execute(delete(MailboxSyncState).where(MailboxSyncState.mailbox_id == mailbox))
+    live.run("msg-live-1", send_enabled=False)
+    assert PostgresEmailRepository(engine).acquire_sync(mailbox, uuid4()) == "4321"
