@@ -20,6 +20,7 @@ from uuid import uuid4
 import pytest
 from alembic import command
 from alembic.config import Config
+from alembic.script import ScriptDirectory
 from sqlalchemy import create_engine, delete, inspect, select, text
 from sqlalchemy.engine import Engine, make_url
 from sqlalchemy.exc import DBAPIError, IntegrityError
@@ -446,7 +447,8 @@ def test_cli_dry_run_reads_but_never_writes_or_embeds(
     assert rag_cli(["sync"]) == 0
 
     output = capsys.readouterr().out
-    assert '"mode": "dry_run"' in output and '"migration": "0004"' in output
+    head = ScriptDirectory.from_config(Config("alembic.ini")).get_current_head()
+    assert '"mode": "dry_run"' in output and f'"migration": "{head}"' in output
     assert '"chunk_count": 18' in output
     assert stored() == before
 
