@@ -61,6 +61,8 @@ class Settings(BaseSettings):
     pubsub_service_account: str = ""
     tasks_service_account: str = ""
     gmail_topic: str = "projects/reply-mcfly-poc/topics/gmail-events"
+    # Replies to one sender per 24 hours before further mail goes to manual review.
+    sender_daily_reply_limit: int = Field(default=20, ge=1)
     enable_rag: bool = False
     rag_backend: Literal["markdown", "pgvector"] = "markdown"
     rag_embedding_model: str = Field(default="gemini-embedding-001", min_length=1)

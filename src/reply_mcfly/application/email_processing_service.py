@@ -1,7 +1,7 @@
 import time
 from collections.abc import Callable
 from dataclasses import replace
-from datetime import UTC, datetime
+from datetime import UTC, datetime, timedelta
 from uuid import UUID, uuid4
 
 from reply_mcfly.application.attachment_service import UnconfiguredAttachmentService
@@ -37,8 +37,10 @@ class EmailProcessingService:
         enable_rag: bool = False,
         rag_query_builder: Callable[[IncomingEmail], str] = build_rag_retrieval_query,
         rag_timeout: float = 0.0,
+        sender_daily_reply_limit: int | None = None,
     ) -> None:
         self._rag_query_builder, self._rag_timeout = rag_query_builder, rag_timeout
+        self.sender_daily_reply_limit = sender_daily_reply_limit
         self.repository, self.gmail, self.runner = repository, gmail, runner
         self.mailbox_id, self.replies = mailbox_id, replies
         self.attachments = attachments or UnconfiguredAttachmentService()
@@ -72,6 +74,14 @@ class EmailProcessingService:
                 RagPassage(item.source_id, item.text, item.provenance) for item in passages
             ),
         )
+
+    def _require_reply_budget(self, recipient: str) -> None:
+        # Two auto-responders without auto-reply headers would otherwise answer each other forever.
+        if self.sender_daily_reply_limit is None:
+            return
+        sent = self.repository.sent_reply_count(self.mailbox_id, recipient, timedelta(days=1))
+        if sent >= self.sender_daily_reply_limit:
+            raise WorkflowError("SENDER_REPLY_LIMIT_REACHED")
 
     def process(self, job_id: UUID, *, send_enabled: bool = True) -> Status:
         require_mailbox(self.repository.get(job_id).mailbox_id, self.mailbox_id)
@@ -142,6 +152,7 @@ class EmailProcessingService:
                 return Status.READY_TO_SEND
             if time.monotonic() + 45 > deadline:
                 raise WorkflowError("DEPENDENCY_TIMEOUT", retryable=True, status=503)
+            self._require_reply_budget(entry.recipient)
             self.repository.prepare(job, entry)
             self.repository.transition(job, Status.SENDING)
             try:

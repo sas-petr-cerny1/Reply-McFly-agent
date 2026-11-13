@@ -111,6 +111,7 @@ def build_services(
             enable_rag=settings.enable_rag,
             rag_query_builder=rag.query_builder,
             rag_timeout=rag.timeout,
+            sender_daily_reply_limit=settings.sender_daily_reply_limit,
         ),
         verifier,
     )
