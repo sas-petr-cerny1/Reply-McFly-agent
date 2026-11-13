@@ -36,6 +36,7 @@ Copy evidence verbatim from the supplied source text, including Markdown punctua
 **bold markers**, list prefixes, accents, spaces, and line breaks. Never render Markdown as
 plain text in exact_quote. For example, "- **Label:** value." must not become "Label: value.".
 Prefer copying one complete source line per evidence item; use separate items for separate lines.
+Never start or end exact_quote in the middle of a word or number; such quotes are rejected.
 Do not claim facts beyond those exact passages.
 Answer every part of the customer question that is substantiated by available sources. When
 attachment_passages are present, use attachment source_ids for facts that appear only in
